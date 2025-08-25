@@ -1,0 +1,1020 @@
+#if UNITY_EDITOR
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEditor;
+using UnityEngine.SceneManagement;
+using System.Linq;
+
+public static class PersistentIdManager
+{
+    private static PersistentIdRegistrySO registry;
+    private const string REGISTRY_SEARCH_FILTER = "t:PersistentIdRegistrySO";
+    private const string REGISTRY_PATH = "Assets/PersistentIdRegistry.asset";
+
+    private static Dictionary<int, HashSet<uint>> trackedObjectIds = new Dictionary<int, HashSet<uint>>();
+    private static HashSet<int> processedComponentsThisFrame = new HashSet<int>(); // Track components processed in the current frame
+    private static bool hasChangesThisFrame = false;
+
+    private static List<Action> pendingActions = new List<Action>();
+    private static bool scheduled = false;
+
+    static PersistentIdManager()
+    {
+        InitializeRegistry();
+        SubscribeToCallbacks();
+    }
+
+    [InitializeOnLoadMethod]
+    private static void Initialize()
+    {
+        EditorApplication.delayCall += () => {
+            InitializeRegistry();
+            SubscribeToCallbacks();
+            ScanAllObjectsForTracking();
+        };
+    }
+
+    private static void InitializeRegistry()
+    {
+        if(registry != null) return;
+
+        var guids = AssetDatabase.FindAssets(REGISTRY_SEARCH_FILTER);
+
+        if(guids.Length > 0)
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guids[0]);
+            registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(path);
+
+            if(guids.Length > 1)
+            {
+                Debug.LogWarning($"Multiple PersistentIdRegistry assets found. Using: {path}");
+            }
+        }
+
+        if(registry == null)
+        {
+            CreateRegistry();
+        }
+    }
+
+    private static void CreateRegistry()
+    {
+        Debug.LogError("PersistentIdRegistry not found in project. Creating new registry at: " + REGISTRY_PATH);
+
+        registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
+
+        var directory = System.IO.Path.GetDirectoryName(REGISTRY_PATH);
+        if(!AssetDatabase.IsValidFolder(directory))
+        {
+            AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(directory));
+        }
+
+        AssetDatabase.CreateAsset(registry, REGISTRY_PATH);
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+    }
+
+    private static void SubscribeToCallbacks()
+    {
+        ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
+        ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
+
+        Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+        Undo.undoRedoPerformed += OnUndoRedoPerformed;
+
+        EditorApplication.update -= OnEditorUpdate;
+        EditorApplication.update += OnEditorUpdate;
+    }
+
+    private static void ScanAllObjectsForTracking()
+    {
+        for(int i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var scene = SceneManager.GetSceneAt(i);
+            if(!scene.isLoaded) continue;
+
+            var rootGos = scene.GetRootGameObjects();
+            foreach(var root in rootGos)
+            {
+                ProcessGameObjectForTracking(root);
+            }
+        }
+    }
+
+    private static void ProcessGameObjectForTracking(GameObject go)
+    {
+        TrackObjectIds(go.GetInstanceID());
+
+        foreach(Transform child in go.transform)
+        {
+            ProcessGameObjectForTracking(child.gameObject);
+        }
+    }
+
+    public static bool RegisterId(uint id)
+    {
+        return registry != null && registry.RegisterId(id);
+    }
+
+    public static bool UnregisterId(uint id)
+    {
+        return registry != null && registry.UnregisterId(id);
+    }
+
+    public static bool IsIdRegistered(uint id)
+    {
+        return registry != null && registry.IsIdRegistered(id);
+    }
+
+    public static uint GenerateUniqueId()
+    {
+        return registry?.GenerateUniqueId() ?? 0;
+    }
+
+    public static void ProcessComponent(MonoBehaviour component)
+    {
+        if(component != null && !processedComponentsThisFrame.Contains(component.GetInstanceID()))
+        {
+            ProcessComponentForPersistentIds(component);
+        }
+    }
+
+    public static void ForceGenerateIds(SerializedObject serializedObject)
+    {
+        AssignOrReplaceIds(serializedObject);
+    }
+
+    private static void OnEditorUpdate()
+    {
+        hasChangesThisFrame = false;
+        processedComponentsThisFrame.Clear(); // Reset processed components each frame
+        if(pendingActions.Count > 0)
+        {
+            ProcessPendingActions();
+        }
+    }
+
+    private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
+    {
+        hasChangesThisFrame = true;
+
+        // Clear processed components at the start of event processing to avoid stale state
+        processedComponentsThisFrame.Clear();
+
+        for(int i = 0; i < stream.length; i++)
+        {
+            var eventType = stream.GetEventType(i);
+
+            switch(eventType)
+            {
+                case ObjectChangeKind.CreateGameObjectHierarchy:
+                {
+                    Debug.Log("ObjectChangeKind.CreateGameObjectHierarchy");
+                    stream.GetCreateGameObjectHierarchyEvent(i, out var createEvent);
+                    TrackObjectIds(createEvent.instanceId);
+                    HandleGameObjectCreation(stream, i);
+                    break;
+                }
+
+                case ObjectChangeKind.DestroyGameObjectHierarchy:
+                {
+                    Debug.Log("ObjectChangeKind.DestroyGameObjectHierarchy");
+                    stream.GetDestroyGameObjectHierarchyEvent(i, out var destroyEvent);
+                    HandleGameObjectDestruction(stream, i);
+                    break;
+                }
+
+                case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
+                {
+                    Debug.Log("ObjectChangeKind.ChangeGameObjectOrComponentProperties");
+                    stream.GetChangeGameObjectOrComponentPropertiesEvent(i, out var changeEvent);
+                    var obj = EditorUtility.InstanceIDToObject(changeEvent.instanceId);
+
+                    // Handle component removal explicitly
+                    if(obj == null) // Component was likely removed
+                    {
+                        if(trackedObjectIds.TryGetValue(changeEvent.instanceId, out var ids))
+                        {
+                            foreach(var id in ids)
+                            {
+                                if(IsIdRegistered(id))
+                                {
+                                    UnregisterId(id);
+                                    Debug.Log($"Unregistered PersistentId 0x{id:X8} due to component removal (Properties Change)");
+                                }
+                            }
+                            trackedObjectIds.Remove(changeEvent.instanceId);
+                        }
+                    }
+                    else
+                    {
+                        TrackObjectIds(changeEvent.instanceId);
+                        HandleComponentPropertyChange(stream, i);
+                    }
+                    break;
+                }
+
+                case ObjectChangeKind.ChangeGameObjectStructure:
+                {
+                    Debug.Log("ObjectChangeKind.ChangeGameObjectStructure");
+                    stream.GetChangeGameObjectStructureEvent(i, out var structureEvent);
+                    HandleGameObjectStructureChange(stream, i);
+                    break;
+                }
+
+                case ObjectChangeKind.ChangeGameObjectStructureHierarchy:
+                {
+                    Debug.Log("ObjectChangeKind.ChangeGameObjectStructureHierarchy");
+                    stream.GetChangeGameObjectStructureHierarchyEvent(i, out var structureEvent);
+                    TrackObjectIds(structureEvent.instanceId);
+                    HandleGameObjectStructureHierarchyChange(stream, i);
+                    break;
+                }
+
+                case ObjectChangeKind.CreateAssetObject:
+                {
+                    Debug.Log("ObjectChangeKind.CreateAssetObject");
+                    HandleAssetCreation(stream, i);
+                    break;
+                }
+            }
+        }
+
+        registry?.ValidateRegistry();
+    }
+
+    private static void TrackObjectIds(int instanceId)
+    {
+        var obj = EditorUtility.InstanceIDToObject(instanceId);
+        if(obj == null)
+        {
+            // Remove tracking for non-existent objects
+            if(trackedObjectIds.ContainsKey(instanceId))
+            {
+                foreach(var id in trackedObjectIds[instanceId])
+                {
+                    if(IsIdRegistered(id))
+                    {
+                        UnregisterId(id);
+                        Debug.Log($"Unregistered PersistentId 0x{id:X8} due to missing object (instanceId: {instanceId})");
+                    }
+                }
+                trackedObjectIds.Remove(instanceId);
+            }
+            return;
+        }
+
+        var idsForObject = new HashSet<uint>();
+
+        if(obj is GameObject go)
+        {
+            foreach(var comp in go.GetComponents<MonoBehaviour>())
+            {
+                if(comp != null)
+                {
+                    CollectIdsFromComponent(comp, idsForObject);
+                }
+            }
+        }
+        else if(obj is MonoBehaviour comp)
+        {
+            CollectIdsFromComponent(comp, idsForObject);
+        }
+
+        if(idsForObject.Count > 0)
+        {
+            trackedObjectIds[instanceId] = idsForObject;
+            Debug.Log($"[TrackObjectIds] Tracked {idsForObject.Count} ID(s) for instance {instanceId}: {string.Join(", ", idsForObject.Select(id => $"0x{id:X8}"))}");
+        }
+        else
+        {
+            trackedObjectIds.Remove(instanceId);
+            Debug.Log($"[TrackObjectIds] Removed tracking for instance {instanceId}");
+        }
+    }
+
+    private static void CollectIdsFromComponent(MonoBehaviour component, HashSet<uint> idCollection)
+    {
+        var so = new SerializedObject(component);
+        var iterator = so.GetIterator();
+
+        while(iterator.NextVisible(true))
+        {
+            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                iterator.type == "PersistentId")
+            {
+                var idProp = iterator.FindPropertyRelative("id");
+                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+                {
+                    uint id = (uint)idProp.intValue;
+                    if(id != 0)
+                    {
+                        idCollection.Add(id);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void HandleGameObjectCreation(UnityEngine.Object obj)
+    {
+        if(obj is GameObject go)
+        {
+            foreach(var comp in go.GetComponents<MonoBehaviour>())
+            {
+                if(comp != null && !processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+                {
+                    ProcessComponentForPersistentIds(comp);
+                }
+            }
+        }
+        else if(obj is Component comp && comp is MonoBehaviour monoBehaviour)
+        {
+            if(!processedComponentsThisFrame.Contains(monoBehaviour.GetInstanceID()))
+            {
+                ProcessComponentForPersistentIds(monoBehaviour);
+            }
+        }
+    }
+
+    // Keep the old method as fallback
+    private static void HandleGameObjectCreation(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetCreateGameObjectHierarchyEvent(eventIndex, out var createEvent);
+        var obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
+        HandleGameObjectCreation(obj);
+    }
+
+    private static void HandleGameObjectDestruction(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetDestroyGameObjectHierarchyEvent(eventIndex, out var destroyEvent);
+
+        Debug.Log($"[HandleGameObjectDestruction] Destroying instanceId: {destroyEvent.instanceId}");
+
+        // Since the object is being destroyed, we can't access it directly anymore.
+        // We need to rely on our tracking data to know what IDs were associated with this object.
+        if(trackedObjectIds.TryGetValue(destroyEvent.instanceId, out var trackedIds))
+        {
+            Debug.Log($"[HandleGameObjectDestruction] Found {trackedIds.Count} tracked IDs for destroyed object");
+
+            // Create a copy to iterate over since we'll be modifying collections
+            var idsToProcess = new HashSet<uint>(trackedIds);
+
+            foreach(var id in idsToProcess)
+            {
+                // Check if this ID is used by any OTHER existing objects in the scene
+                bool idFoundElsewhere = IsIdCurrentlyInUseInScene(id, destroyEvent.instanceId);
+
+                if(!idFoundElsewhere && IsIdRegistered(id))
+                {
+                    UnregisterId(id);
+                    Debug.Log($"Unregistered PersistentId 0x{id:X8} due to GameObject destruction (instanceId: {destroyEvent.instanceId})");
+                }
+                else if(idFoundElsewhere)
+                {
+                    Debug.Log($"Preserved PersistentId 0x{id:X8} - still in use by another object");
+                }
+                else if(!IsIdRegistered(id))
+                {
+                    Debug.Log($"PersistentId 0x{id:X8} was not registered (instanceId: {destroyEvent.instanceId})");
+                }
+            }
+
+            // Remove the tracking entry for this destroyed object
+            trackedObjectIds.Remove(destroyEvent.instanceId);
+        }
+        else
+        {
+            Debug.Log($"[HandleGameObjectDestruction] No tracked IDs found for destroyed instanceId: {destroyEvent.instanceId}");
+
+            // FALLBACK: The destroyed object might not be tracked under this instanceId
+            // This can happen when objects change instance IDs during their lifecycle
+            // Let's search for any IDs that are no longer in use anywhere in the scene
+            Debug.Log($"[HandleGameObjectDestruction] Performing fallback cleanup for orphaned IDs");
+
+            var allCurrentIds = new HashSet<uint>();
+            for(int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if(!scene.isLoaded) continue;
+
+                var rootGos = scene.GetRootGameObjects();
+                foreach(var root in rootGos)
+                {
+                    CollectAllIdsFromGameObject(root, allCurrentIds);
+                }
+            }
+
+            // Find registered IDs that are no longer in the scene
+            var orphanedIds = new List<uint>();
+            if(registry != null)
+            {
+                // We'd need to add a method to get all registered IDs from the registry
+                // For now, we'll check our tracking data for any IDs that aren't in the current scene
+                foreach(var kvp in trackedObjectIds.ToList())
+                {
+                    var obj = EditorUtility.InstanceIDToObject(kvp.Key);
+                    if(obj == null)
+                    {
+                        foreach(var id in kvp.Value)
+                        {
+                            if(!allCurrentIds.Contains(id))
+                            {
+                                orphanedIds.Add(id);
+                            }
+                        }
+                        trackedObjectIds.Remove(kvp.Key);
+                    }
+                }
+            }
+
+            foreach(var orphanedId in orphanedIds)
+            {
+                if(IsIdRegistered(orphanedId))
+                {
+                    UnregisterId(orphanedId);
+                    Debug.Log($"Unregistered orphaned PersistentId 0x{orphanedId:X8} during fallback cleanup");
+                }
+            }
+        }
+    }
+
+    // Helper method to collect all IDs from a GameObject hierarchy
+    private static void CollectAllIdsFromGameObject(GameObject go, HashSet<uint> idCollection)
+    {
+        foreach(var comp in go.GetComponents<MonoBehaviour>())
+        {
+            if(comp != null)
+            {
+                CollectIdsFromComponent(comp, idCollection);
+            }
+        }
+
+        foreach(Transform child in go.transform)
+        {
+            CollectAllIdsFromGameObject(child.gameObject, idCollection);
+        }
+    }
+
+    // UPDATED: Helper method to check if an ID is currently in use in the scene, excluding a specific instanceId
+    private static bool IsIdCurrentlyInUseInScene(uint targetId, int excludeInstanceId = -1)
+    {
+        for(int i = 0; i < SceneManager.sceneCount; i++)
+        {
+            var scene = SceneManager.GetSceneAt(i);
+            if(!scene.isLoaded) continue;
+
+            var rootGos = scene.GetRootGameObjects();
+            foreach(var root in rootGos)
+            {
+                if(CheckGameObjectForId(root, targetId, excludeInstanceId))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // UPDATED: Helper method to recursively check a GameObject and its children for a specific ID, excluding a specific instanceId
+    private static bool CheckGameObjectForId(GameObject go, uint targetId, int excludeInstanceId = -1)
+    {
+        // Skip checking this GameObject if it's the one being excluded (i.e., the one being destroyed)
+        if(excludeInstanceId != -1 && go.GetInstanceID() == excludeInstanceId)
+        {
+            return false;
+        }
+
+        foreach(var comp in go.GetComponents<MonoBehaviour>())
+        {
+            if(comp != null && ComponentHasId(comp, targetId))
+            {
+                return true;
+            }
+        }
+
+        foreach(Transform child in go.transform)
+        {
+            if(CheckGameObjectForId(child.gameObject, targetId, excludeInstanceId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // NEW: Helper method to check if a component has a specific PersistentId
+    private static bool ComponentHasId(MonoBehaviour component, uint targetId)
+    {
+        var so = new SerializedObject(component);
+        var iterator = so.GetIterator();
+
+        while(iterator.NextVisible(true))
+        {
+            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                iterator.type == "PersistentId")
+            {
+                var idProp = iterator.FindPropertyRelative("id");
+                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+                {
+                    uint id = (uint)idProp.intValue;
+                    if(id == targetId)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static void HandleGameObjectStructureChange(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetChangeGameObjectStructureEvent(eventIndex, out var structureEvent);
+        var obj = EditorUtility.InstanceIDToObject(structureEvent.instanceId);
+
+        if(obj is GameObject go)
+        {
+            // Clear processed components so we re-evaluate all attached components
+            processedComponentsThisFrame.Clear();
+
+            int instanceId = structureEvent.instanceId;
+
+            // Gather current PersistentIds after structure change
+            var currentIds = new HashSet<uint>();
+            foreach(var comp in go.GetComponents<MonoBehaviour>())
+            {
+                if(comp != null)
+                {
+                    ProcessComponentForPersistentIds(comp);
+                    CollectIdsFromComponent(comp, currentIds);
+                }
+            }
+
+            // Compare with previously tracked IDs for this GameObject
+            if(trackedObjectIds.TryGetValue(instanceId, out var oldIds))
+            {
+                foreach(var oldId in oldIds)
+                {
+                    if(!currentIds.Contains(oldId) && IsIdRegistered(oldId))
+                    {
+                        // FIXED: Check if the ID is used elsewhere before unregistering
+                        if(!IsIdCurrentlyInUseInScene(oldId))
+                        {
+                            UnregisterId(oldId);
+                            Debug.Log($"[PersistentIdManager] Unregistered orphaned PersistentId 0x{oldId:X8} due to component removal on GameObject: {go.name}");
+                        }
+                        else
+                        {
+                            Debug.Log($"[PersistentIdManager] Preserved PersistentId 0x{oldId:X8} - still in use elsewhere");
+                        }
+                    }
+                }
+            }
+
+            // Update tracking state
+            if(currentIds.Count > 0)
+            {
+                trackedObjectIds[instanceId] = currentIds;
+            }
+            else
+            {
+                trackedObjectIds.Remove(instanceId);
+            }
+
+            registry?.ValidateRegistry();
+        }
+    }
+
+
+    private static void HandleComponentPropertyChange(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetChangeGameObjectOrComponentPropertiesEvent(eventIndex, out var changeEvent);
+        var obj = EditorUtility.InstanceIDToObject(changeEvent.instanceId);
+
+        if(obj is MonoBehaviour comp)
+        {
+            if(!processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+            {
+                ProcessComponentForPersistentIds(comp);
+                // Also track at the GameObject level to ensure proper cleanup
+                if(comp.gameObject != null)
+                {
+                    TrackObjectIds(comp.gameObject.GetInstanceID());
+                }
+            }
+        }
+        else if(obj is GameObject go)
+        {
+            // Always update tracking for the GameObject when its properties change
+            TrackObjectIds(go.GetInstanceID());
+
+            foreach(var component in go.GetComponents<MonoBehaviour>())
+            {
+                if(component != null && !processedComponentsThisFrame.Contains(component.GetInstanceID()))
+                {
+                    ProcessComponentForPersistentIds(component);
+                }
+            }
+        }
+    }
+
+    private static void HandleGameObjectStructureHierarchyChange(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetChangeGameObjectStructureHierarchyEvent(eventIndex, out var structureEvent);
+        var obj = EditorUtility.InstanceIDToObject(structureEvent.instanceId);
+
+        if(obj is GameObject go)
+        {
+            foreach(var comp in go.GetComponents<MonoBehaviour>())
+            {
+                if(comp != null && !processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+                {
+                    ProcessComponentForPersistentIds(comp);
+                }
+            }
+        }
+    }
+
+    private static void HandleAssetCreation(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetCreateAssetObjectEvent(eventIndex, out var createEvent);
+        var obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
+
+        if(obj is GameObject prefab && PrefabUtility.IsPartOfPrefabAsset(prefab))
+        {
+            foreach(var comp in prefab.GetComponents<MonoBehaviour>())
+            {
+                if(comp != null)
+                {
+                    ClearIdsFromPrefabAsset(new SerializedObject(comp));
+                }
+            }
+        }
+    }
+
+    private static void ProcessComponentForPersistentIds(MonoBehaviour component)
+    {
+        if(component == null) return;
+
+        var componentId = component.GetInstanceID();
+        if(processedComponentsThisFrame.Contains(componentId)) return;
+
+        processedComponentsThisFrame.Add(componentId);
+        var so = new SerializedObject(component);
+
+        if(PrefabUtility.IsPartOfPrefabAsset(component))
+        {
+            ClearIdsFromPrefabAsset(so);
+        }
+        else
+        {
+            AssignOrReplaceIds(so);
+        }
+    }
+
+    private static void AssignOrReplaceIds(SerializedObject so)
+    {
+        var component = so.targetObject as MonoBehaviour;
+        if(component == null) return;
+
+        Undo.RecordObject(so.targetObject, "Assign Persistent ID");
+
+        var idsToRegister = new HashSet<uint>();
+        var idsToUnregister = new HashSet<uint>();
+        bool hasChanges = false;
+
+        var iterator = so.GetIterator();
+        while(iterator.NextVisible(true))
+        {
+            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                iterator.type == "PersistentId")
+            {
+                var idProp = iterator.FindPropertyRelative("id");
+                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+                {
+                    uint currentId = (uint)idProp.intValue;
+
+                    // Only generate a new ID if the current ID is 0 or invalid
+                    if(currentId == 0)
+                    {
+                        uint newId = GenerateUniqueId();
+                        if(newId != 0)
+                        {
+                            idProp.intValue = unchecked((int)newId);
+                            idsToRegister.Add(newId);
+                            hasChanges = true;
+
+                            UpdateTracking(so.targetObject, 0, newId);
+                            Debug.Log($"Generated PersistentId: 0x{newId:X8} for {so.targetObject.name}.{iterator.name}");
+                        }
+                    }
+                    else
+                    {
+                        var instanceId = so.targetObject.GetInstanceID();
+
+                        // Already registered ? check if it belongs to this object
+                        if(IsIdRegistered(currentId))
+                        {
+                            // Check if the current object does NOT already track this ID
+                            if(!trackedObjectIds.TryGetValue(instanceId, out var idsForObject) || !idsForObject.Contains(currentId))
+                            {
+                                // FIXED: Additional check - verify the ID isn't legitimately owned by this component
+                                // This handles the duplication case where both objects temporarily have the same ID
+                                bool shouldReplace = true;
+
+                                // Check if this is a duplicate scenario by seeing if another object claims this ID
+                                foreach(var kvp in trackedObjectIds)
+                                {
+                                    if(kvp.Key != instanceId && kvp.Value.Contains(currentId))
+                                    {
+                                        // Another object is tracking this ID, this is definitely a duplicate
+                                        shouldReplace = true;
+                                        break;
+                                    }
+                                }
+
+                                if(shouldReplace)
+                                {
+                                    // ID conflict detected: this component is a duplicate of another one
+                                    uint newId = GenerateUniqueId();
+                                    if(newId != 0)
+                                    {
+                                        idProp.intValue = unchecked((int)newId);
+                                        idsToRegister.Add(newId);
+                                        hasChanges = true;
+
+                                        Debug.LogWarning($"[PersistentIdManager] Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
+
+                                        UpdateTracking(so.targetObject, currentId, newId);
+                                    }
+                                }
+                                else
+                                {
+                                    // This object legitimately owns the ID
+                                    idsToRegister.Add(currentId);
+                                    UpdateTracking(so.targetObject, 0, currentId);
+                                }
+                            }
+                            else
+                            {
+                                // This object legitimately owns the ID — re-track it just in case
+                                idsToRegister.Add(currentId);
+                                UpdateTracking(so.targetObject, 0, currentId);
+                            }
+                        }
+                        else
+                        {
+                            // Not registered yet — safe to add
+                            idsToRegister.Add(currentId);
+                            UpdateTracking(so.targetObject, 0, currentId);
+                        }
+                    }
+
+                }
+            }
+        }
+
+        if(hasChanges)
+        {
+            so.ApplyModifiedProperties();
+            EditorUtility.SetDirty(so.targetObject);
+        }
+
+        foreach(var id in idsToUnregister)
+        {
+            UnregisterId(id);
+        }
+
+        foreach(var id in idsToRegister)
+        {
+            RegisterId(id);
+        }
+    }
+
+    private static void ClearIdsFromPrefabAsset(SerializedObject so)
+    {
+        Undo.RecordObject(so.targetObject, "Clear Persistent ID");
+
+        var iterator = so.GetIterator();
+        bool hasChanges = false;
+
+        while(iterator.NextVisible(true))
+        {
+            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                iterator.type == "PersistentId")
+            {
+                var idProp = iterator.FindPropertyRelative("id");
+                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer && idProp.intValue != 0)
+                {
+                    uint oldId = (uint)idProp.intValue;
+                    idProp.intValue = 0;
+                    hasChanges = true;
+                    UnregisterId(oldId);
+                    UpdateTracking(so.targetObject, oldId, 0);
+                }
+            }
+        }
+
+        if(hasChanges)
+        {
+            so.ApplyModifiedProperties();
+        }
+    }
+
+    private static void OnUndoRedoPerformed()
+    {
+        var orphanedIds = new HashSet<uint>();
+        var keysToRemove = new List<int>();
+        var trackingUpdates = new Dictionary<int, HashSet<uint>>();
+
+        foreach(var kvp in trackedObjectIds)
+        {
+            int instanceId = kvp.Key;
+            var trackedIds = kvp.Value;
+            var obj = EditorUtility.InstanceIDToObject(instanceId);
+
+            if(obj == null)
+            {
+                foreach(var id in trackedIds)
+                {
+                    // FIXED: Check if ID is used elsewhere before marking as orphaned
+                    if(!IsIdCurrentlyInUseInScene(id))
+                    {
+                        orphanedIds.Add(id);
+                    }
+                }
+                keysToRemove.Add(instanceId);
+            }
+            else
+            {
+                var currentIds = new HashSet<uint>();
+
+                if(obj is GameObject go)
+                {
+                    foreach(var comp in go.GetComponents<MonoBehaviour>())
+                    {
+                        if(comp != null)
+                        {
+                            CollectIdsFromComponent(comp, currentIds);
+                        }
+                    }
+                }
+                else if(obj is MonoBehaviour comp)
+                {
+                    CollectIdsFromComponent(comp, currentIds);
+                }
+
+                foreach(var trackedId in trackedIds)
+                {
+                    if(!currentIds.Contains(trackedId) && IsIdRegistered(trackedId))
+                    {
+                        // FIXED: Check if ID is used elsewhere before marking as orphaned
+                        if(!IsIdCurrentlyInUseInScene(trackedId))
+                        {
+                            orphanedIds.Add(trackedId);
+                        }
+                    }
+                }
+
+                foreach(var currentId in currentIds)
+                {
+                    if(!IsIdRegistered(currentId))
+                    {
+                        RegisterId(currentId);
+                        Debug.Log($"Re-registered PersistentId after undo: 0x{currentId:X8} for {obj.name}");
+                    }
+                }
+
+                trackingUpdates[instanceId] = new HashSet<uint>(currentIds);
+            }
+        }
+
+        foreach(var update in trackingUpdates)
+        {
+            trackedObjectIds[update.Key] = update.Value;
+        }
+
+        foreach(var key in keysToRemove)
+        {
+            trackedObjectIds.Remove(key);
+        }
+
+        foreach(var orphanedId in orphanedIds)
+        {
+            if(IsIdRegistered(orphanedId))
+            {
+                UnregisterId(orphanedId);
+                Debug.Log($"Removed orphaned PersistentId from registry: 0x{orphanedId:X8}");
+            }
+        }
+
+        registry?.ValidateRegistry();
+    }
+
+    public static void RegenerateId(SerializedProperty persistentIdProperty)
+    {
+        var target = persistentIdProperty.serializedObject.targetObject;
+        Undo.RecordObject(target, "Regenerate Persistent ID");
+
+        var idProp = persistentIdProperty.FindPropertyRelative("id");
+        if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+        {
+            uint oldId = (uint)idProp.intValue;
+            uint newId = GenerateUniqueId();
+
+            if(oldId != 0)
+            {
+                UnregisterId(oldId);
+            }
+
+            if(newId != 0)
+            {
+                idProp.intValue = unchecked((int)newId);
+                persistentIdProperty.serializedObject.ApplyModifiedProperties();
+
+                UpdateTracking(target, oldId, newId);
+                RegisterId(newId);
+
+                Debug.Log($"Regenerated PersistentId: 0x{newId:X8} for {target.name}");
+
+                // Update GameObject's tracked IDs if target is a MonoBehaviour
+                if(target is MonoBehaviour mb && mb.gameObject != null)
+                {
+                    TrackObjectIds(mb.gameObject.GetInstanceID());
+                }
+            }
+        }
+
+        registry?.ValidateRegistry();
+    }
+
+    private static void UpdateTracking(UnityEngine.Object obj, uint oldId, uint newId)
+    {
+        if(obj == null) return;
+
+        int instanceId = obj.GetInstanceID();
+
+        // Clean up any old tracking entries for this object that might be under different instance IDs
+        var keysToRemove = new List<int>();
+        foreach(var kvp in trackedObjectIds.ToList())
+        {
+            var trackedObj = EditorUtility.InstanceIDToObject(kvp.Key);
+            if(trackedObj == obj && kvp.Key != instanceId)
+            {
+                // This is the same object but tracked under a different instance ID
+                // Merge the IDs and remove the old entry
+                if(!trackedObjectIds.TryGetValue(instanceId, out var currentIds))
+                {
+                    currentIds = new HashSet<uint>();
+                    trackedObjectIds[instanceId] = currentIds;
+                }
+
+                foreach(var id in kvp.Value)
+                {
+                    currentIds.Add(id);
+                }
+
+                keysToRemove.Add(kvp.Key);
+                Debug.Log($"[UpdateTracking] Consolidated tracking from old instanceId {kvp.Key} to new instanceId {instanceId}");
+            }
+        }
+
+        foreach(var key in keysToRemove)
+        {
+            trackedObjectIds.Remove(key);
+        }
+
+        // Now update the tracking for the current instance ID
+        if(!trackedObjectIds.TryGetValue(instanceId, out var ids))
+        {
+            ids = new HashSet<uint>();
+            trackedObjectIds[instanceId] = ids;
+        }
+
+        if(oldId != 0) ids.Remove(oldId);
+        if(newId != 0) ids.Add(newId);
+
+        if(ids.Count == 0)
+        {
+            trackedObjectIds.Remove(instanceId);
+        }
+
+        Debug.Log($"[UpdateTracking] Updated tracking for instanceId {instanceId}: {string.Join(", ", ids.Select(id => $"0x{id:X8}"))}");
+    }
+
+    private static void ProcessPendingActions()
+    {
+        foreach(var action in pendingActions)
+        {
+            action();
+        }
+        pendingActions.Clear();
+        scheduled = false;
+        registry?.ValidateRegistry();
+    }
+}
+#endif
