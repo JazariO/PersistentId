@@ -34,7 +34,6 @@ public static class PersistentIdManager
             ScanAllObjectsForTracking();
         };
     }
-
     private static void InitializeRegistry()
     {
         if(registry != null) return;
@@ -57,7 +56,6 @@ public static class PersistentIdManager
             CreateRegistry();
         }
     }
-
     private static void CreateRegistry()
     {
         Debug.LogError("PersistentIdRegistry not found in project. Creating new registry at: " + REGISTRY_PATH);
@@ -74,7 +72,6 @@ public static class PersistentIdManager
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
     }
-
     private static void SubscribeToCallbacks()
     {
         ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
@@ -86,7 +83,6 @@ public static class PersistentIdManager
         EditorApplication.update -= OnEditorUpdate;
         EditorApplication.update += OnEditorUpdate;
     }
-
     private static void ScanAllObjectsForTracking()
     {
         for(int i = 0; i < SceneManager.sceneCount; i++)
@@ -101,7 +97,6 @@ public static class PersistentIdManager
             }
         }
     }
-
     private static void ProcessGameObjectForTracking(GameObject go)
     {
         TrackObjectIds(go.GetInstanceID());
@@ -111,27 +106,22 @@ public static class PersistentIdManager
             ProcessGameObjectForTracking(child.gameObject);
         }
     }
-
     public static bool RegisterId(uint id)
     {
         return registry != null && registry.RegisterId(id);
     }
-
     public static bool UnregisterId(uint id)
     {
         return registry != null && registry.UnregisterId(id);
     }
-
     public static bool IsIdRegistered(uint id)
     {
         return registry != null && registry.IsIdRegistered(id);
     }
-
     public static uint GenerateUniqueId()
     {
         return registry?.GenerateUniqueId() ?? 0;
     }
-
     public static void ProcessComponent(MonoBehaviour component)
     {
         if(component != null && !processedComponentsThisFrame.Contains(component.GetInstanceID()))
@@ -139,12 +129,10 @@ public static class PersistentIdManager
             ProcessComponentForPersistentIds(component);
         }
     }
-
     public static void ForceGenerateIds(SerializedObject serializedObject)
     {
         AssignOrReplaceIds(serializedObject);
     }
-
     private static void OnEditorUpdate()
     {
         hasChangesThisFrame = false;
@@ -154,7 +142,6 @@ public static class PersistentIdManager
             ProcessPendingActions();
         }
     }
-
     private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
     {
         hasChangesThisFrame = true;
@@ -174,16 +161,14 @@ public static class PersistentIdManager
                     stream.GetCreateGameObjectHierarchyEvent(i, out var createEvent);
                     TrackObjectIds(createEvent.instanceId);
                     HandleGameObjectCreation(stream, i);
-                    break;
-                }
+                } break;
 
                 case ObjectChangeKind.DestroyGameObjectHierarchy:
                 {
                     Debug.Log("ObjectChangeKind.DestroyGameObjectHierarchy");
                     stream.GetDestroyGameObjectHierarchyEvent(i, out var destroyEvent);
                     HandleGameObjectDestruction(stream, i);
-                    break;
-                }
+                } break;
 
                 case ObjectChangeKind.ChangeGameObjectOrComponentProperties:
                 {
@@ -212,16 +197,14 @@ public static class PersistentIdManager
                         TrackObjectIds(changeEvent.instanceId);
                         HandleComponentPropertyChange(stream, i);
                     }
-                    break;
-                }
+                } break;
 
                 case ObjectChangeKind.ChangeGameObjectStructure:
                 {
                     Debug.Log("ObjectChangeKind.ChangeGameObjectStructure");
                     stream.GetChangeGameObjectStructureEvent(i, out var structureEvent);
                     HandleGameObjectStructureChange(stream, i);
-                    break;
-                }
+                } break;
 
                 case ObjectChangeKind.ChangeGameObjectStructureHierarchy:
                 {
@@ -229,24 +212,26 @@ public static class PersistentIdManager
                     stream.GetChangeGameObjectStructureHierarchyEvent(i, out var structureEvent);
                     TrackObjectIds(structureEvent.instanceId);
                     HandleGameObjectStructureHierarchyChange(stream, i);
-                    break;
-                }
+                } break;
 
                 case ObjectChangeKind.CreateAssetObject:
                 {
                     Debug.Log("ObjectChangeKind.CreateAssetObject");
                     HandleAssetCreation(stream, i);
-                    break;
-                }
+                } break;
+
+                case ObjectChangeKind.UpdatePrefabInstances:
+                {
+                    HandleUpdatePrefabInstances(stream, i);
+                } break;
             }
         }
 
         registry?.ValidateRegistry();
     }
-
     private static void TrackObjectIds(int instanceId)
     {
-        var obj = EditorUtility.InstanceIDToObject(instanceId);
+        UnityEngine.Object obj = EditorUtility.InstanceIDToObject(instanceId);
         if(obj == null)
         {
             // Remove tracking for non-existent objects
@@ -285,26 +270,25 @@ public static class PersistentIdManager
         if(idsForObject.Count > 0)
         {
             trackedObjectIds[instanceId] = idsForObject;
-            Debug.Log($"[TrackObjectIds] Tracked {idsForObject.Count} ID(s) for instance {instanceId}: {string.Join(", ", idsForObject.Select(id => $"0x{id:X8}"))}");
+            //Debug.Log($"[TrackObjectIds] Tracked {idsForObject.Count} ID(s) for instance {instanceId}: {string.Join(", ", idsForObject.Select(id => $"0x{id:X8}"))}");
         }
         else
         {
             trackedObjectIds.Remove(instanceId);
-            Debug.Log($"[TrackObjectIds] Removed tracking for instance {instanceId}");
+            //Debug.Log($"[TrackObjectIds] Removed tracking for instance {instanceId}");
         }
     }
-
     private static void CollectIdsFromComponent(MonoBehaviour component, HashSet<uint> idCollection)
     {
-        var so = new SerializedObject(component);
-        var iterator = so.GetIterator();
+        SerializedObject so = new SerializedObject(component);
+        SerializedProperty iterator = so.GetIterator();
 
         while(iterator.NextVisible(true))
         {
             if(iterator.propertyType == SerializedPropertyType.Generic &&
                 iterator.type == "PersistentId")
             {
-                var idProp = iterator.FindPropertyRelative("id");
+                SerializedProperty idProp = iterator.FindPropertyRelative("id");
                 if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                 {
                     uint id = (uint)idProp.intValue;
@@ -316,7 +300,6 @@ public static class PersistentIdManager
             }
         }
     }
-
     private static void HandleGameObjectCreation(UnityEngine.Object obj)
     {
         if(obj is GameObject go)
@@ -337,7 +320,6 @@ public static class PersistentIdManager
             }
         }
     }
-
     // Keep the old method as fallback
     private static void HandleGameObjectCreation(ObjectChangeEventStream stream, int eventIndex)
     {
@@ -345,7 +327,6 @@ public static class PersistentIdManager
         var obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
         HandleGameObjectCreation(obj);
     }
-
     private static void HandleGameObjectDestruction(ObjectChangeEventStream stream, int eventIndex)
     {
         stream.GetDestroyGameObjectHierarchyEvent(eventIndex, out var destroyEvent);
@@ -439,7 +420,6 @@ public static class PersistentIdManager
             }
         }
     }
-
     // Helper method to collect all IDs from a GameObject hierarchy
     private static void CollectAllIdsFromGameObject(GameObject go, HashSet<uint> idCollection)
     {
@@ -456,8 +436,7 @@ public static class PersistentIdManager
             CollectAllIdsFromGameObject(child.gameObject, idCollection);
         }
     }
-
-    // UPDATED: Helper method to check if an ID is currently in use in the scene, excluding a specific instanceId
+    // Helper method to check if an ID is currently in use in the scene, excluding a specific instanceId
     private static bool IsIdCurrentlyInUseInScene(uint targetId, int excludeInstanceId = -1)
     {
         for(int i = 0; i < SceneManager.sceneCount; i++)
@@ -476,8 +455,7 @@ public static class PersistentIdManager
         }
         return false;
     }
-
-    // UPDATED: Helper method to recursively check a GameObject and its children for a specific ID, excluding a specific instanceId
+    // Helper method to recursively check a GameObject and its children for a specific ID, excluding a specific instanceId
     private static bool CheckGameObjectForId(GameObject go, uint targetId, int excludeInstanceId = -1)
     {
         // Skip checking this GameObject if it's the one being excluded (i.e., the one being destroyed)
@@ -504,8 +482,7 @@ public static class PersistentIdManager
 
         return false;
     }
-
-    // NEW: Helper method to check if a component has a specific PersistentId
+    // Helper method to check if a component has a specific PersistentId
     private static bool ComponentHasId(MonoBehaviour component, uint targetId)
     {
         var so = new SerializedObject(component);
@@ -530,11 +507,10 @@ public static class PersistentIdManager
 
         return false;
     }
-
     private static void HandleGameObjectStructureChange(ObjectChangeEventStream stream, int eventIndex)
     {
         stream.GetChangeGameObjectStructureEvent(eventIndex, out var structureEvent);
-        var obj = EditorUtility.InstanceIDToObject(structureEvent.instanceId);
+        UnityEngine.Object obj = EditorUtility.InstanceIDToObject(structureEvent.instanceId);
 
         if(obj is GameObject go)
         {
@@ -561,7 +537,7 @@ public static class PersistentIdManager
                 {
                     if(!currentIds.Contains(oldId) && IsIdRegistered(oldId))
                     {
-                        // FIXED: Check if the ID is used elsewhere before unregistering
+                        // Check if the ID is used elsewhere before unregistering
                         if(!IsIdCurrentlyInUseInScene(oldId))
                         {
                             UnregisterId(oldId);
@@ -588,8 +564,6 @@ public static class PersistentIdManager
             registry?.ValidateRegistry();
         }
     }
-
-
     private static void HandleComponentPropertyChange(ObjectChangeEventStream stream, int eventIndex)
     {
         stream.GetChangeGameObjectOrComponentPropertiesEvent(eventIndex, out var changeEvent);
@@ -621,7 +595,6 @@ public static class PersistentIdManager
             }
         }
     }
-
     private static void HandleGameObjectStructureHierarchyChange(ObjectChangeEventStream stream, int eventIndex)
     {
         stream.GetChangeGameObjectStructureHierarchyEvent(eventIndex, out var structureEvent);
@@ -638,24 +611,89 @@ public static class PersistentIdManager
             }
         }
     }
-
     private static void HandleAssetCreation(ObjectChangeEventStream stream, int eventIndex)
     {
+        // TODO(Jazz): Do we really need this here? If we can use the asset post-processor to modify the prefab asset
+        //             by clearing its PersistentId field after it gets created we can remove this whole case.
+
         stream.GetCreateAssetObjectEvent(eventIndex, out var createEvent);
-        var obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
+        UnityEngine.Object obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
 
         if(obj is GameObject prefab && PrefabUtility.IsPartOfPrefabAsset(prefab))
         {
-            foreach(var comp in prefab.GetComponents<MonoBehaviour>())
+            foreach(var comp in prefab.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if(comp != null)
+                if(comp == null) continue;
+                var so = new SerializedObject(comp);
+
+                var prop = so.FindProperty("PersistentId");
+                if(prop != null && prop.intValue != 0)
                 {
-                    ClearIdsFromPrefabAsset(new SerializedObject(comp));
+                    UnregisterId((uint)prop.intValue);
+                }
+
+                // Clear prefab asset IDs
+                ClearIdsFromPrefabAsset(so);
+
+                // Mark the component dirty so Unity knows it must be written back to disk
+                EditorUtility.SetDirty(comp);
+            }
+
+            // Force the prefab asset itself to resave with cleared IDs
+            string path = AssetDatabase.GetAssetPath(prefab);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+
+            Debug.Log($"[PersistentIdManager] Cleared and unregistered PersistentIds from new prefab asset: {prefab.name}");
+        }
+    }
+    private static void HandleUpdatePrefabInstances(ObjectChangeEventStream stream, int eventIndex)
+    {
+        stream.GetUpdatePrefabInstancesEvent(eventIndex, out var updatePrefabInstancesEvent);
+        foreach(int instanceId in updatePrefabInstancesEvent.instanceIds)
+        {
+            UnityEngine.Object obj = EditorUtility.InstanceIDToObject(instanceId);
+            if(obj is GameObject prefabInstance)
+            {
+                foreach(var comp in prefabInstance.GetComponentsInChildren<MonoBehaviour>())
+                {
+                    if(comp == null) continue;
+                    SerializedObject so = new SerializedObject(comp);
+
+                    SerializedProperty iterator = so.GetIterator();
+                    while(iterator.NextVisible(true))
+                    {
+                        if(iterator.propertyType == SerializedPropertyType.Generic &&
+                            iterator.type == "PersistentId")
+                        {
+                            var idProp = iterator.FindPropertyRelative("id");
+                            if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+                            {
+                                uint currentId = (uint)idProp.intValue;
+                                if(currentId != 0)
+                                {
+                                    // Valid persistent id detected on prefab instance.
+                                    // Mark as prefab override.
+
+                                    // Force Unity to register a change
+                                    idProp.intValue = 0;
+                                    so.ApplyModifiedProperties();
+
+                                    // Now restore the original value
+                                    idProp.intValue = unchecked((int)currentId);
+                                    so.ApplyModifiedProperties();
+
+                                    // Record the modification explicitly
+                                    PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
+
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-
     private static void ProcessComponentForPersistentIds(MonoBehaviour component)
     {
         if(component == null) return;
@@ -668,14 +706,15 @@ public static class PersistentIdManager
 
         if(PrefabUtility.IsPartOfPrefabAsset(component))
         {
+            // This is the actual prefab .asset file - must clear IDs
             ClearIdsFromPrefabAsset(so);
         }
         else
         {
+            // Keep IDs for prefab instances in the scene
             AssignOrReplaceIds(so);
         }
     }
-
     private static void AssignOrReplaceIds(SerializedObject so)
     {
         var component = so.targetObject as MonoBehaviour;
@@ -722,7 +761,7 @@ public static class PersistentIdManager
                             // Check if the current object does NOT already track this ID
                             if(!trackedObjectIds.TryGetValue(instanceId, out var idsForObject) || !idsForObject.Contains(currentId))
                             {
-                                // FIXED: Additional check - verify the ID isn't legitimately owned by this component
+                                // Additional check - verify the ID isn't legitimately owned by this component
                                 // This handles the duplication case where both objects temporarily have the same ID
                                 bool shouldReplace = true;
 
@@ -794,7 +833,6 @@ public static class PersistentIdManager
             RegisterId(id);
         }
     }
-
     private static void ClearIdsFromPrefabAsset(SerializedObject so)
     {
         Undo.RecordObject(so.targetObject, "Clear Persistent ID");
@@ -824,7 +862,6 @@ public static class PersistentIdManager
             so.ApplyModifiedProperties();
         }
     }
-
     private static void OnUndoRedoPerformed()
     {
         var orphanedIds = new HashSet<uint>();
@@ -841,7 +878,7 @@ public static class PersistentIdManager
             {
                 foreach(var id in trackedIds)
                 {
-                    // FIXED: Check if ID is used elsewhere before marking as orphaned
+                    // Check if ID is used elsewhere before marking as orphaned
                     if(!IsIdCurrentlyInUseInScene(id))
                     {
                         orphanedIds.Add(id);
@@ -872,7 +909,7 @@ public static class PersistentIdManager
                 {
                     if(!currentIds.Contains(trackedId) && IsIdRegistered(trackedId))
                     {
-                        // FIXED: Check if ID is used elsewhere before marking as orphaned
+                        // Check if ID is used elsewhere before marking as orphaned
                         if(!IsIdCurrentlyInUseInScene(trackedId))
                         {
                             orphanedIds.Add(trackedId);
@@ -914,7 +951,6 @@ public static class PersistentIdManager
 
         registry?.ValidateRegistry();
     }
-
     public static void RegenerateId(SerializedProperty persistentIdProperty)
     {
         var target = persistentIdProperty.serializedObject.targetObject;
@@ -951,7 +987,6 @@ public static class PersistentIdManager
 
         registry?.ValidateRegistry();
     }
-
     private static void UpdateTracking(UnityEngine.Object obj, uint oldId, uint newId)
     {
         if(obj == null) return;
@@ -1003,9 +1038,8 @@ public static class PersistentIdManager
             trackedObjectIds.Remove(instanceId);
         }
 
-        Debug.Log($"[UpdateTracking] Updated tracking for instanceId {instanceId}: {string.Join(", ", ids.Select(id => $"0x{id:X8}"))}");
+        //Debug.Log($"[UpdateTracking] Updated tracking for instanceId {instanceId}: {string.Join(", ", ids.Select(id => $"0x{id:X8}"))}");
     }
-
     private static void ProcessPendingActions()
     {
         foreach(var action in pendingActions)
