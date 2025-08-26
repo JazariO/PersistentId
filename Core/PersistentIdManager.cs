@@ -270,12 +270,12 @@ public static class PersistentIdManager
         if(idsForObject.Count > 0)
         {
             trackedObjectIds[instanceId] = idsForObject;
-            //Debug.Log($"[TrackObjectIds] Tracked {idsForObject.Count} ID(s) for instance {instanceId}: {string.Join(", ", idsForObject.Select(id => $"0x{id:X8}"))}");
+            //Debug.Log($"[TrackObjectIds] Tracked {idsForObject.Count} ID(s) for instance {instanceId} with objectName: {EditorUtility.InstanceIDToObject(instanceId).name}: {string.Join(", ", idsForObject.Select(id => $"0x{id:X8}"))}");
         }
         else
         {
             trackedObjectIds.Remove(instanceId);
-            //Debug.Log($"[TrackObjectIds] Removed tracking for instance {instanceId}");
+            //Debug.Log($"[TrackObjectIds] Removed tracking for instance {instanceId} with objectName: {EditorUtility.InstanceIDToObject(instanceId).name}.");
         }
     }
     private static void CollectIdsFromComponent(MonoBehaviour component, HashSet<uint> idCollection)
@@ -613,9 +613,6 @@ public static class PersistentIdManager
     }
     private static void HandleAssetCreation(ObjectChangeEventStream stream, int eventIndex)
     {
-        // TODO(Jazz): Do we really need this here? If we can use the asset post-processor to modify the prefab asset
-        //             by clearing its PersistentId field after it gets created we can remove this whole case.
-
         stream.GetCreateAssetObjectEvent(eventIndex, out var createEvent);
         UnityEngine.Object obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
 
@@ -623,18 +620,18 @@ public static class PersistentIdManager
         {
             foreach(var comp in prefab.GetComponentsInChildren<MonoBehaviour>(true))
             {
-                if(comp == null) continue;
-                var so = new SerializedObject(comp);
-
+                if(comp == null) continue;                 
+                var so = new SerializedObject(comp);       
+                                                                                                                                                        
                 var prop = so.FindProperty("PersistentId");
-                if(prop != null && prop.intValue != 0)
-                {
-                    UnregisterId((uint)prop.intValue);
-                }
-
-                // Clear prefab asset IDs
-                ClearIdsFromPrefabAsset(so);
-
+                if(prop != null && prop.intValue != 0)     
+                {                                          
+                    UnregisterId((uint)prop.intValue);     
+                }                                          
+                                                                                                            
+                // Clear prefab asset IDs                                                                   
+                ClearIdsFromPrefabAsset(so);                                                                
+                                                                                                            
                 // Mark the component dirty so Unity knows it must be written back to disk
                 EditorUtility.SetDirty(comp);
             }
@@ -686,6 +683,43 @@ public static class PersistentIdManager
                                     // Record the modification explicitly
                                     PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
 
+                                    // Clear the persistent id on the prefab asset
+                                    MonoBehaviour prefabAsset = PrefabUtility.GetCorrespondingObjectFromOriginalSource(comp);
+                                    string assetPath = AssetDatabase.GetAssetPath(prefabAsset);
+                                    if(!string.IsNullOrEmpty(assetPath))
+                                    {
+                                        GameObject prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+                                        try
+                                        {
+                                            foreach(var assetComp in prefabRoot.GetComponentsInChildren<MonoBehaviour>(true))
+                                            {
+                                                if(assetComp == null) continue;
+
+                                                SerializedObject assetSO = new SerializedObject(assetComp);
+                                                SerializedProperty assetIterator = assetSO.GetIterator();
+
+                                                while(assetIterator.NextVisible(true))
+                                                {
+                                                    if(assetIterator.propertyType == SerializedPropertyType.Generic &&
+                                                        assetIterator.type == "PersistentId")
+                                                    {
+                                                        var assetIdProp = assetIterator.FindPropertyRelative("id");
+                                                        if(assetIdProp != null && assetIdProp.propertyType == SerializedPropertyType.Integer)
+                                                        {
+                                                            assetIdProp.intValue = 0;
+                                                            assetSO.ApplyModifiedProperties();
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+                                        }
+                                        finally
+                                        {
+                                            PrefabUtility.UnloadPrefabContents(prefabRoot);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -737,7 +771,7 @@ public static class PersistentIdManager
                 {
                     uint currentId = (uint)idProp.intValue;
 
-                    // Only generate a new ID if the current ID is 0 or invalid
+                    // Only generate a new ID if the current ID is 0
                     if(currentId == 0)
                     {
                         uint newId = GenerateUniqueId();
@@ -755,64 +789,67 @@ public static class PersistentIdManager
                     {
                         var instanceId = so.targetObject.GetInstanceID();
 
-                        // Already registered ? check if it belongs to this object
+                        // Check if this ID is registered
                         if(IsIdRegistered(currentId))
                         {
-                            // Check if the current object does NOT already track this ID
-                            if(!trackedObjectIds.TryGetValue(instanceId, out var idsForObject) || !idsForObject.Contains(currentId))
-                            {
-                                // Additional check - verify the ID isn't legitimately owned by this component
-                                // This handles the duplication case where both objects temporarily have the same ID
-                                bool shouldReplace = true;
+                            // Check if this object legitimately owns this ID
+                            bool isLegitimateOwner = false;
 
-                                // Check if this is a duplicate scenario by seeing if another object claims this ID
+                            if(trackedObjectIds.TryGetValue(instanceId, out var idsForObject) && idsForObject.Contains(currentId))
+                            {
+                                isLegitimateOwner = true;
+                            }
+                            else
+                            {
+                                // Check if this is the only object in the scene with this ID
+                                // This handles cases where tracking might be temporarily out of sync
+                                bool foundElsewhere = false;
                                 foreach(var kvp in trackedObjectIds)
                                 {
                                     if(kvp.Key != instanceId && kvp.Value.Contains(currentId))
                                     {
-                                        // Another object is tracking this ID, this is definitely a duplicate
-                                        shouldReplace = true;
+                                        foundElsewhere = true;
                                         break;
                                     }
                                 }
 
-                                if(shouldReplace)
+                                if(!foundElsewhere)
                                 {
-                                    // ID conflict detected: this component is a duplicate of another one
-                                    uint newId = GenerateUniqueId();
-                                    if(newId != 0)
-                                    {
-                                        idProp.intValue = unchecked((int)newId);
-                                        idsToRegister.Add(newId);
-                                        hasChanges = true;
-
-                                        Debug.LogWarning($"[PersistentIdManager] Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
-
-                                        UpdateTracking(so.targetObject, currentId, newId);
-                                    }
+                                    // This appears to be the legitimate owner despite not being tracked
+                                    isLegitimateOwner = true;
                                 }
-                                else
-                                {
-                                    // This object legitimately owns the ID
-                                    idsToRegister.Add(currentId);
-                                    UpdateTracking(so.targetObject, 0, currentId);
-                                }
+                            }
+
+                            if(isLegitimateOwner)
+                            {
+                                // This object legitimately owns the ID - keep it
+                                idsToRegister.Add(currentId);
+                                UpdateTracking(so.targetObject, 0, currentId);
                             }
                             else
                             {
-                                // This object legitimately owns the ID — re-track it just in case
-                                idsToRegister.Add(currentId);
-                                UpdateTracking(so.targetObject, 0, currentId);
+                                // ID conflict detected: this component is a duplicate
+                                uint newId = GenerateUniqueId();
+                                if(newId != 0)
+                                {
+                                    idProp.intValue = unchecked((int)newId);
+                                    idsToRegister.Add(newId);
+                                    hasChanges = true;
+
+                                    Debug.LogWarning($"[PersistentIdManager] Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
+
+                                    UpdateTracking(so.targetObject, currentId, newId);
+                                }
                             }
                         }
                         else
                         {
-                            // Not registered yet — safe to add
+                            // Not registered yet — safe to register as-is
                             idsToRegister.Add(currentId);
                             UpdateTracking(so.targetObject, 0, currentId);
+                            Debug.Log($"Registering existing PersistentId: 0x{currentId:X8} for {so.targetObject.name}.{iterator.name}");
                         }
                     }
-
                 }
             }
         }
