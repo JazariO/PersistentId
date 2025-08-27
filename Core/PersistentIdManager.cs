@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.Linq;
 
@@ -12,7 +13,7 @@ public static class PersistentIdManager
     private const string REGISTRY_PATH = "Assets/PersistentIdRegistry.asset";
 
     private static Dictionary<int, HashSet<uint>> trackedObjectIds = new Dictionary<int, HashSet<uint>>();
-    private static HashSet<int> processedComponentsThisDomainCycle = new HashSet<int>();
+    private static HashSet<int> processedComponentsThisSession = new HashSet<int>();
 
     static PersistentIdManager()
     {
@@ -24,11 +25,11 @@ public static class PersistentIdManager
     public static void PrintProcessedComponentIds()
     {
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.AppendLine("==== Processed Component Instance Ids =====");
-        foreach(var componentInstanceID in processedComponentsThisDomainCycle)
+        sb.AppendLine($"==== Processed Component Instance Ids [{processedComponentsThisSession.Count}] =====");
+        foreach(var componentInstanceID in processedComponentsThisSession)
         {
             if(!trackedObjectIds.ContainsKey(componentInstanceID)) continue;
-            sb.Append("InstanceID: " + componentInstanceID.ToString() + " ");
+            sb.Append("\nInstanceID: " + componentInstanceID.ToString() + " ");
 
             int count = 0;
             foreach(var persistentId in trackedObjectIds[componentInstanceID])
@@ -43,14 +44,14 @@ public static class PersistentIdManager
     [MenuItem("Tools/Persistent Id/Remove Processed Components Hashset", false, 0)]
     public static void RemoveProcessedComponentIds()
     {
-        processedComponentsThisDomainCycle.Clear();
+        processedComponentsThisSession.Clear();
         Debug.Log("Processed Components This Domain Cycle Cleared.");
     }
 
     [InitializeOnLoadMethod]
     private static void Initialize()
     {
-        processedComponentsThisDomainCycle.Clear();
+        Debug.Log("[PersistentIdManager] Initializing()");
         EditorApplication.delayCall += () => {
             InitializeRegistry();
             SubscribeToCallbacks();
@@ -97,6 +98,7 @@ public static class PersistentIdManager
     }
     private static void SubscribeToCallbacks()
     {
+        Debug.Log("[PersistentIdManager] SubscribingToCallbacks()");
         ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
         ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
 
@@ -105,6 +107,78 @@ public static class PersistentIdManager
 
         Undo.postprocessModifications -= OnPostProcessModifications;
         Undo.postprocessModifications += OnPostProcessModifications;
+
+        EditorSceneManager.sceneOpened -= OnSceneOpened;
+        EditorSceneManager.sceneOpened += OnSceneOpened;
+        EditorSceneManager.sceneClosing -= OnSceneClosing;
+        EditorSceneManager.sceneClosing += OnSceneClosing;
+    }
+    public static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+    {
+        Debug.Log("Editor Scene Opened.");
+        foreach(var root in scene.GetRootGameObjects())
+        {
+            var components = root.GetComponentsInChildren<MonoBehaviour>(true);
+            foreach(var comp in components)
+            {
+                var so = new SerializedObject(comp);
+                var iterator = so.GetIterator();
+
+                while(iterator.NextVisible(true))
+                {
+                    if(iterator.propertyType == SerializedPropertyType.Generic &&
+                        iterator.type == nameof(PersistentId))
+                    {
+                        var idProp = iterator.FindPropertyRelative("id");
+                        if(idProp != null && idProp.uintValue != 0)
+                        {
+                            var instanceId = comp.GetInstanceID();
+
+                            if(!trackedObjectIds.TryGetValue(instanceId, out var ids))
+                            {
+                                ids = new HashSet<uint>();
+                                trackedObjectIds[instanceId] = ids;
+                            }
+
+                            if(!IsIdRegistered(idProp.uintValue))
+                                RegisterId(idProp.uintValue);
+                            
+
+                            ids.Add(idProp.uintValue);
+                            processedComponentsThisSession.Add(instanceId);
+                        }
+                    }
+                }
+            }
+        }
+
+        Debug.Log($"Rehydrated PersistentId tracking for scene '{scene.name}'");
+    }
+    public static void OnSceneClosing(Scene scene, bool removingScene)
+    {
+        Debug.Log("Editor Scene Closing.");
+        var objectsToRemove = new List<int>();
+
+        foreach(var kvp in trackedObjectIds)
+        {
+            var obj = EditorUtility.InstanceIDToObject(kvp.Key);
+            if(obj is GameObject go && go.scene == scene)
+            {
+                objectsToRemove.Add(kvp.Key);
+            }
+            else if(obj is Component comp && comp.gameObject.scene == scene)
+            {
+                objectsToRemove.Add(kvp.Key);
+            }
+        }
+
+        foreach(var id in objectsToRemove)
+        {
+            trackedObjectIds.Remove(id);
+            processedComponentsThisSession.Remove(id);
+        }
+
+        Debug.Log($"Cleaned up {objectsToRemove.Count} tracked IDs from scene '{scene.name}'");
     }
     private static UndoPropertyModification[] OnPostProcessModifications(UndoPropertyModification[] modifications)
     {
@@ -134,8 +208,11 @@ public static class PersistentIdManager
                         idProp.uintValue = previousId;
                         so.ApplyModifiedProperties();
                         EditorUtility.SetDirty(component);
-
                         modifications[i].keepPrefabOverride = true;
+                        
+                        // Re-register if persistent id value is missing from registry
+                        if(!IsIdRegistered(idProp.uintValue))
+                            RegisterId(idProp.uintValue);
 
                         Debug.Log($"Restored reverted PersistentId from previousValue: 0x{previousId:X8} on '{component.name}'");
                     }
@@ -207,7 +284,7 @@ public static class PersistentIdManager
                     {
                         foreach(var comp in go.GetComponents<MonoBehaviour>())
                         {
-                            if(comp != null && !processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
+                            if(comp != null && !processedComponentsThisSession.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
@@ -218,7 +295,7 @@ public static class PersistentIdManager
                     }
                     else if(obj is Component comp && comp is MonoBehaviour monoBehaviour)
                     {
-                        if(!processedComponentsThisDomainCycle.Contains(monoBehaviour.GetInstanceID()))
+                        if(!processedComponentsThisSession.Contains(monoBehaviour.GetInstanceID()))
                         {
                             ProcessComponentForPersistentIds(monoBehaviour);
                         }
@@ -353,7 +430,7 @@ public static class PersistentIdManager
                         if(obj is MonoBehaviour comp)
                         {
                             // Prevent return visits for the same components
-                            if(!processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
+                            if(!processedComponentsThisSession.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
@@ -368,7 +445,7 @@ public static class PersistentIdManager
                         {
                             foreach(var component in go.GetComponents<MonoBehaviour>())
                             {
-                                if(component != null && !processedComponentsThisDomainCycle.Contains(component.GetInstanceID()))
+                                if(component != null && !processedComponentsThisSession.Contains(component.GetInstanceID()))
                                 {
                                     ProcessComponentForPersistentIds(component);
                                 }
@@ -447,7 +524,7 @@ public static class PersistentIdManager
                     {
                         foreach(var comp in go.GetComponents<MonoBehaviour>())
                         {
-                            if(comp != null && !processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
+                            if(comp != null && !processedComponentsThisSession.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
@@ -745,9 +822,9 @@ public static class PersistentIdManager
         if(component == null) return;
 
         var componentInstanceId = component.GetInstanceID();
-        if(processedComponentsThisDomainCycle.Contains(componentInstanceId)) return;
+        if(processedComponentsThisSession.Contains(componentInstanceId)) return;
 
-        processedComponentsThisDomainCycle.Add(componentInstanceId);
+        processedComponentsThisSession.Add(componentInstanceId);
         var so = new SerializedObject(component);
 
         if(PrefabUtility.IsPartOfPrefabAsset(component))
