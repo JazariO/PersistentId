@@ -20,6 +20,18 @@ public static class PersistentIdManager
         SubscribeToCallbacks();
     }
 
+    [MenuItem("Tools/Persistent Id/Print Processed Component Ids", false, 0)]
+    public static void PrintProcessedComponentIds()
+    {
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("==== Processed Component Instance Ids =====");
+        foreach(var component in processedComponentsThisDomainCycle)
+        {
+            sb.AppendLine(component.ToString());
+        }
+        Debug.Log(sb.ToString());
+    }
+
     [InitializeOnLoadMethod]
     private static void Initialize()
     {
@@ -113,7 +125,11 @@ public static class PersistentIdManager
     }
     public static uint GenerateUniqueId()
     {
-        if(registry == null) return 0;
+        if(registry == null)
+        {
+            Debug.LogError("Registry not found, generating invalid id.");
+            return 0;
+        }
         return registry.GenerateUniqueId();
     }
     private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
@@ -700,7 +716,7 @@ public static class PersistentIdManager
                     var idProp = iterator.FindPropertyRelative("id");
                     if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                     {
-                        uint currentId = (uint)idProp.intValue;
+                        uint currentId = idProp.uintValue;
 
                         // Only generate a new ID if the current ID is 0
                         if(currentId == 0)
@@ -708,12 +724,13 @@ public static class PersistentIdManager
                             uint newId = GenerateUniqueId();
                             if(newId != 0)
                             {
-                                idProp.intValue = unchecked((int)newId);
+                                idProp.uintValue = unchecked(newId);
                                 idsToRegister.Add(newId);
                                 hasChanges = true;
 
                                 UpdateTracking(so.targetObject, 0, newId);
                                 Debug.Log($"Generated PersistentId: 0x{newId:X8} for {so.targetObject.name}.{iterator.name}");
+                                Debug.Log($"Generated PersistentId value on property DEC: " +  idProp.uintValue + $" HEX: 0x{idProp.uintValue:X8}");
                             }
                         }
                         else
@@ -763,11 +780,11 @@ public static class PersistentIdManager
                                     uint newId = GenerateUniqueId();
                                     if(newId != 0)
                                     {
-                                        idProp.intValue = unchecked((int)newId);
+                                        idProp.uintValue = unchecked(newId);
                                         idsToRegister.Add(newId);
                                         hasChanges = true;
 
-                                        Debug.LogWarning($"[PersistentIdManager] Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
+                                        Debug.Log($"Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
 
                                         UpdateTracking(so.targetObject, currentId, newId);
                                     }

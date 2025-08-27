@@ -84,12 +84,13 @@ public class PersistentIdRegistrySO : ScriptableObject
         uint newId;
         do
         {
-            int high = Random.Range(1, int.MaxValue);
-            int low = Random.Range(1, int.MaxValue);
-            newId = ((uint)high << 28) | (uint)low;
+            int high = Random.Range(0, 1 << 16);
+            int low = Random.Range(0, 1 << 16);
+            newId = ((uint)high << 16) | (uint)low;
         }
         while(idHashSet.Contains(newId) || newId == 0);
 
+        Debug.Log("RegistrySO Generated id: " + newId);
         return newId;
     }
 
@@ -116,6 +117,12 @@ public class PersistentIdRegistrySO : ScriptableObject
     [ContextMenu("Print Ids", false, 0)]
     public void PrintAllIds()
     {
+        if(registeredIds.Count < 1)
+        {
+            Debug.Log("No Ids Registered.");
+            return;
+        }
+
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
         sb.AppendLine("===== All Registered Ids =====");
         foreach(uint id in RegisteredIds)

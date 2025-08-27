@@ -56,6 +56,7 @@ public class PersistentIdPropertyDrawer : PropertyDrawer
         var oldEnabled = GUI.enabled;
         GUI.enabled = false;
 
+        Debug.Log("Property Drawer recieved id: " + id);
         string displayValue = id == 0 ? "Not Generated" : $"0x{id:X8}";
         EditorGUI.TextField(fieldRect, displayValue);
 

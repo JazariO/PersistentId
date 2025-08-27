@@ -1,11 +1,8 @@
-using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
-using static UnityEngine.GraphicsBuffer;
 
 /// <summary>
 /// Serializable struct that stores a persistent uint ID for game objects.
-/// Does not inherit from MonoBehaviour - designed to be used as a property.
+/// Does not inherit from MonoBehaviour - designed to be composed into a MonoBehaviour as a property.
 /// </summary>
 [System.Serializable]
 public struct PersistentId
@@ -24,6 +21,7 @@ public struct PersistentId
 
     public void SetId(uint newId)
     {
+        if(newId == 0) Debug.LogError("Trying to set persistent id to 0");
         id = newId;
     }
 
