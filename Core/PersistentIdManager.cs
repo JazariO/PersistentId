@@ -25,11 +25,26 @@ public static class PersistentIdManager
     {
         System.Text.StringBuilder sb = new System.Text.StringBuilder();
         sb.AppendLine("==== Processed Component Instance Ids =====");
-        foreach(var component in processedComponentsThisDomainCycle)
+        foreach(var componentInstanceID in processedComponentsThisDomainCycle)
         {
-            sb.AppendLine(component.ToString());
+            if(!trackedObjectIds.ContainsKey(componentInstanceID)) continue;
+            sb.Append("InstanceID: " + componentInstanceID.ToString() + " ");
+
+            int count = 0;
+            foreach(var persistentId in trackedObjectIds[componentInstanceID])
+            {
+                sb.Append($"ID {count:D2}: 0x{persistentId:X8}, ");
+                count++;
+            }
         }
         Debug.Log(sb.ToString());
+    }
+
+    [MenuItem("Tools/Persistent Id/Remove Processed Components Hashset", false, 0)]
+    public static void RemoveProcessedComponentIds()
+    {
+        processedComponentsThisDomainCycle.Clear();
+        Debug.Log("Processed Components This Domain Cycle Cleared.");
     }
 
     [InitializeOnLoadMethod]
@@ -87,7 +102,50 @@ public static class PersistentIdManager
 
         Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         Undo.undoRedoPerformed += OnUndoRedoPerformed;
+
+        Undo.postprocessModifications -= OnPostProcessModifications;
+        Undo.postprocessModifications += OnPostProcessModifications;
     }
+    private static UndoPropertyModification[] OnPostProcessModifications(UndoPropertyModification[] modifications)
+    {
+        for(int i = 0; i < modifications.Length; i++)
+        {
+            var mod = modifications[i];
+
+            if(mod.currentValue.target is MonoBehaviour component &&
+                PrefabUtility.IsPartOfPrefabInstance(component))
+            {
+                var path = mod.currentValue.propertyPath;
+
+                // Look for any PersistentId struct's 'id' field
+                if(path.EndsWith(".id"))
+                {
+                    var so = new SerializedObject(component);
+                    var fieldName = path.Substring(0, path.Length - ".id".Length);
+                    var idProp = so.FindProperty(fieldName)?.FindPropertyRelative("id");
+
+                    if(idProp != null &&
+                        uint.TryParse(mod.currentValue.value, out var newValue) &&
+                        newValue == 0 &&
+                        uint.TryParse(mod.previousValue.value, out var previousId) &&
+                        previousId != 0)
+                    {
+                        // Restore the previous value
+                        idProp.uintValue = previousId;
+                        so.ApplyModifiedProperties();
+                        EditorUtility.SetDirty(component);
+
+                        modifications[i].keepPrefabOverride = true;
+
+                        Debug.Log($"Restored reverted PersistentId from previousValue: 0x{previousId:X8} on '{component.name}'");
+                    }
+                }
+            }
+        }
+
+        return modifications;
+    }
+
     private static void ScanAllObjectsForTracking()
     {
         for(int i = 0; i < SceneManager.sceneCount; i++)
@@ -294,11 +352,12 @@ public static class PersistentIdManager
                         // Handle component property change
                         if(obj is MonoBehaviour comp)
                         {
+                            // Prevent return visits for the same components
                             if(!processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
-                            
+
                             // Track at the GameObject & component level
                             if(comp.gameObject != null)
                             {
@@ -413,9 +472,9 @@ public static class PersistentIdManager
                             var so = new SerializedObject(comp);
 
                             var prop = so.FindProperty("PersistentId");
-                            if(prop != null && prop.intValue != 0)
+                            if(prop != null && prop.uintValue != 0)
                             {
-                                UnregisterId((uint)prop.intValue);
+                                UnregisterId(prop.uintValue);
                             }
 
                             // Clear prefab asset IDs                                                                   
@@ -436,6 +495,7 @@ public static class PersistentIdManager
 
                 case ObjectChangeKind.UpdatePrefabInstances:
                 {
+                    Debug.Log("ObjectChangeKind.UpdatePrefabInstances");
                     stream.GetUpdatePrefabInstancesEvent(eventIndex, out var updatePrefabInstancesEvent);
                     foreach(int instanceId in updatePrefabInstancesEvent.instanceIds)
                     {
@@ -456,18 +516,18 @@ public static class PersistentIdManager
                                         var idProp = iterator.FindPropertyRelative("id");
                                         if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                                         {
-                                            uint currentId = (uint)idProp.intValue;
+                                            uint currentId = idProp.uintValue;
                                             if(currentId != 0)
                                             {
                                                 // Valid persistent id detected on prefab instance.
                                                 // Mark as prefab override.
 
                                                 // Force Unity to register a change
-                                                idProp.intValue = 0;
+                                                idProp.uintValue = 0;
                                                 so.ApplyModifiedProperties();
 
                                                 // Now restore the original value
-                                                idProp.intValue = unchecked((int)currentId);
+                                                idProp.uintValue = currentId;
                                                 so.ApplyModifiedProperties();
 
                                                 // Record the modification explicitly
@@ -496,7 +556,7 @@ public static class PersistentIdManager
                                                                     var assetIdProp = assetIterator.FindPropertyRelative("id");
                                                                     if(assetIdProp != null && assetIdProp.propertyType == SerializedPropertyType.Integer)
                                                                     {
-                                                                        assetIdProp.intValue = 0;
+                                                                        assetIdProp.uintValue = 0;
                                                                         assetSO.ApplyModifiedProperties();
                                                                     }
                                                                 }
@@ -585,7 +645,7 @@ public static class PersistentIdManager
                 SerializedProperty idProp = iterator.FindPropertyRelative("id");
                 if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                 {
-                    uint id = (uint)idProp.intValue;
+                    uint id = idProp.uintValue;
                     if(id != 0)
                     {
                         idCollection.Add(id);
@@ -655,7 +715,7 @@ public static class PersistentIdManager
                     var idProp = iterator.FindPropertyRelative("id");
                     if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                     {
-                        uint id = (uint)idProp.intValue;
+                        uint id = idProp.uintValue;
                         if(id == targetId)
                         {
                             componentHasId = true;
@@ -684,10 +744,10 @@ public static class PersistentIdManager
     {
         if(component == null) return;
 
-        var componentId = component.GetInstanceID();
-        if(processedComponentsThisDomainCycle.Contains(componentId)) return;
+        var componentInstanceId = component.GetInstanceID();
+        if(processedComponentsThisDomainCycle.Contains(componentInstanceId)) return;
 
-        processedComponentsThisDomainCycle.Add(componentId);
+        processedComponentsThisDomainCycle.Add(componentInstanceId);
         var so = new SerializedObject(component);
 
         if(PrefabUtility.IsPartOfPrefabAsset(component))
@@ -697,10 +757,6 @@ public static class PersistentIdManager
         }
         else
         {
-            // Keep IDs for prefab instances in the scene
-            // Assign or Replace ids
-            if(component == null) return;
-
             Undo.RecordObject(so.targetObject, "Assign Persistent ID");
 
             var idsToRegister = new HashSet<uint>();
@@ -716,34 +772,29 @@ public static class PersistentIdManager
                     var idProp = iterator.FindPropertyRelative("id");
                     if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                     {
-                        uint currentId = idProp.uintValue;
+                        uint currentPropPersistentId = idProp.uintValue;
 
                         // Only generate a new ID if the current ID is 0
-                        if(currentId == 0)
+                        if(currentPropPersistentId == 0)
                         {
                             uint newId = GenerateUniqueId();
-                            if(newId != 0)
-                            {
-                                idProp.uintValue = unchecked(newId);
-                                idsToRegister.Add(newId);
-                                hasChanges = true;
+                            idProp.uintValue = newId;
+                            idsToRegister.Add(newId);
+                            hasChanges = true;
 
-                                UpdateTracking(so.targetObject, 0, newId);
-                                Debug.Log($"Generated PersistentId: 0x{newId:X8} for {so.targetObject.name}.{iterator.name}");
-                                Debug.Log($"Generated PersistentId value on property DEC: " +  idProp.uintValue + $" HEX: 0x{idProp.uintValue:X8}");
-                            }
+                            UpdateTracking(so.targetObject, 0, newId);
+                            Debug.Log($"Generated PersistentId: 0x{newId:X8} for {so.targetObject.name}.{iterator.name}");
+                            
                         }
                         else
                         {
-                            var instanceId = so.targetObject.GetInstanceID();
-
                             // Check if this ID is registered
-                            if(IsIdRegistered(currentId))
+                            if(IsIdRegistered(currentPropPersistentId))
                             {
                                 // Check if this object legitimately owns this ID
                                 bool isLegitimateOwner = false;
 
-                                if(trackedObjectIds.TryGetValue(instanceId, out var idsForObject) && idsForObject.Contains(currentId))
+                                if(trackedObjectIds.TryGetValue(componentInstanceId, out var idsForObject) && idsForObject.Contains(currentPropPersistentId))
                                 {
                                     isLegitimateOwner = true;
                                 }
@@ -754,7 +805,7 @@ public static class PersistentIdManager
                                     bool foundElsewhere = false;
                                     foreach(var kvp in trackedObjectIds)
                                     {
-                                        if(kvp.Key != instanceId && kvp.Value.Contains(currentId))
+                                        if(kvp.Key != componentInstanceId && kvp.Value.Contains(currentPropPersistentId))
                                         {
                                             foundElsewhere = true;
                                             break;
@@ -770,9 +821,9 @@ public static class PersistentIdManager
 
                                 if(isLegitimateOwner)
                                 {
-                                    // This object legitimately owns the ID - keep it
-                                    idsToRegister.Add(currentId);
-                                    UpdateTracking(so.targetObject, 0, currentId);
+                                    // This object legitimately owns the ID - keep the ID
+                                    idsToRegister.Add(currentPropPersistentId);
+                                    UpdateTracking(so.targetObject, 0, currentPropPersistentId);
                                 }
                                 else
                                 {
@@ -780,22 +831,22 @@ public static class PersistentIdManager
                                     uint newId = GenerateUniqueId();
                                     if(newId != 0)
                                     {
-                                        idProp.uintValue = unchecked(newId);
+                                        idProp.uintValue = newId;
                                         idsToRegister.Add(newId);
                                         hasChanges = true;
 
-                                        Debug.Log($"Detected duplicate PersistentId 0x{currentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
+                                        Debug.Log($"Detected duplicate PersistentId 0x{currentPropPersistentId:X8} on '{so.targetObject.name}'. Generated new PersistentId: 0x{newId:X8}");
 
-                                        UpdateTracking(so.targetObject, currentId, newId);
+                                        UpdateTracking(so.targetObject, currentPropPersistentId, newId);
                                     }
                                 }
                             }
                             else
                             {
                                 // Not registered yet — safe to register as-is
-                                idsToRegister.Add(currentId);
-                                UpdateTracking(so.targetObject, 0, currentId);
-                                Debug.Log($"Registering existing PersistentId: 0x{currentId:X8} for {so.targetObject.name}.{iterator.name}");
+                                idsToRegister.Add(currentPropPersistentId);
+                                UpdateTracking(so.targetObject, 0, currentPropPersistentId);
+                                Debug.Log($"Registering existing PersistentId: 0x{currentPropPersistentId:X8} for {so.targetObject.name}.{iterator.name}");
                             }
                         }
                     }
@@ -832,10 +883,10 @@ public static class PersistentIdManager
                 iterator.type == "PersistentId")
             {
                 var idProp = iterator.FindPropertyRelative("id");
-                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer && idProp.intValue != 0)
+                if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer && idProp.uintValue != 0)
                 {
-                    uint oldId = (uint)idProp.intValue;
-                    idProp.intValue = 0;
+                    uint oldId = idProp.uintValue;
+                    idProp.uintValue = 0;
                     hasChanges = true;
                     UnregisterId(oldId);
                     UpdateTracking(so.targetObject, oldId, 0);
@@ -935,7 +986,7 @@ public static class PersistentIdManager
             }
         }
 
-        registry?.ValidateRegistry();
+        registry.ValidateRegistry();
     }
     public static void RegenerateId(SerializedProperty persistentIdProperty)
     {
@@ -945,7 +996,7 @@ public static class PersistentIdManager
         var idProp = persistentIdProperty.FindPropertyRelative("id");
         if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
         {
-            uint oldId = (uint)idProp.intValue;
+            uint oldId = idProp.uintValue;
             uint newId = GenerateUniqueId();
 
             if(oldId != 0)
@@ -955,7 +1006,7 @@ public static class PersistentIdManager
 
             if(newId != 0)
             {
-                idProp.intValue = unchecked((int)newId);
+                idProp.uintValue = newId;
                 persistentIdProperty.serializedObject.ApplyModifiedProperties();
 
                 UpdateTracking(target, oldId, newId);

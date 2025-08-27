@@ -21,7 +21,6 @@ public struct PersistentId
 
     public void SetId(uint newId)
     {
-        if(newId == 0) Debug.LogError("Trying to set persistent id to 0");
         id = newId;
     }
 

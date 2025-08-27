@@ -90,7 +90,6 @@ public class PersistentIdRegistrySO : ScriptableObject
         }
         while(idHashSet.Contains(newId) || newId == 0);
 
-        Debug.Log("RegistrySO Generated id: " + newId);
         return newId;
     }
 
