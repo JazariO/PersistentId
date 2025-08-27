@@ -824,7 +824,6 @@ public static class PersistentIdManager
         var componentInstanceId = component.GetInstanceID();
         if(processedComponentsThisSession.Contains(componentInstanceId)) return;
 
-        processedComponentsThisSession.Add(componentInstanceId);
         var so = new SerializedObject(component);
 
         if(PrefabUtility.IsPartOfPrefabAsset(component))
@@ -849,6 +848,7 @@ public static class PersistentIdManager
                     var idProp = iterator.FindPropertyRelative("id");
                     if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
                     {
+                        processedComponentsThisSession.Add(componentInstanceId);
                         uint currentPropPersistentId = idProp.uintValue;
 
                         // Only generate a new ID if the current ID is 0
