@@ -84,11 +84,54 @@ public class PersistentIdRegistrySO : ScriptableObject
         uint newId;
         do
         {
-            newId = (uint)Random.Range(1, int.MaxValue);
+            int high = Random.Range(1, int.MaxValue);
+            int low = Random.Range(1, int.MaxValue);
+            newId = ((uint)high << 28) | (uint)low;
         }
         while(idHashSet.Contains(newId) || newId == 0);
 
         return newId;
+    }
+
+    /// <summary>
+    /// Generates a random hex value and logs it
+    /// </summary>
+    [ContextMenu("Generate Random Hex", false, 0)]
+    public void GenerateHexCode()
+    {
+        InitializeHashSet();
+
+        uint newId;
+        do
+        {
+            int high = Random.Range(1, int.MaxValue);
+            int low =  Random.Range(1, int.MaxValue);
+            newId = ((uint)high << 28) | (uint)low;
+        }
+        while(idHashSet.Contains(newId) || newId == 0);
+        Debug.Log($"newId: {newId} Hex: 0x{newId:X8}");
+    }
+
+    // TODO(Jazz): Remove debugging functions here
+    [ContextMenu("Print Ids", false, 0)]
+    public void PrintAllIds()
+    {
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("===== All Registered Ids =====");
+        foreach(uint id in RegisteredIds)
+        {
+            sb.AppendLine($"Dec: {id}\tHex: 0x{id:X8}");
+        }
+        Debug.Log(sb.ToString());
+    }
+
+    [ContextMenu("Remove All Ids", false, 0)]
+    public void RemoveAllIds()
+    {
+        for(int i = RegisteredIds.Count - 1; i >= 0; i--)
+        {
+            UnregisterId(RegisteredIds[i]);
+        }
     }
 
     /// <summary>

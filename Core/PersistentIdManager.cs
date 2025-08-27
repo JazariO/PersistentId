@@ -12,7 +12,7 @@ public static class PersistentIdManager
     private const string REGISTRY_PATH = "Assets/PersistentIdRegistry.asset";
 
     private static Dictionary<int, HashSet<uint>> trackedObjectIds = new Dictionary<int, HashSet<uint>>();
-    private static HashSet<int> processedComponentsThisFrame = new HashSet<int>();
+    private static HashSet<int> processedComponentsThisDomainCycle = new HashSet<int>();
 
     static PersistentIdManager()
     {
@@ -23,6 +23,7 @@ public static class PersistentIdManager
     [InitializeOnLoadMethod]
     private static void Initialize()
     {
+        processedComponentsThisDomainCycle.Clear();
         EditorApplication.delayCall += () => {
             InitializeRegistry();
             SubscribeToCallbacks();
@@ -74,9 +75,6 @@ public static class PersistentIdManager
 
         Undo.undoRedoPerformed -= OnUndoRedoPerformed;
         Undo.undoRedoPerformed += OnUndoRedoPerformed;
-
-        EditorApplication.update -= OnEditorUpdate;
-        EditorApplication.update += OnEditorUpdate;
     }
     private static void ScanAllObjectsForTracking()
     {
@@ -118,15 +116,8 @@ public static class PersistentIdManager
         if(registry == null) return 0;
         return registry.GenerateUniqueId();
     }
-    private static void OnEditorUpdate()
-    {
-        processedComponentsThisFrame.Clear(); // Reset processed components each frame
-    }
     private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
     {
-        // Clear processed components at the start of event processing to avoid stale state
-        processedComponentsThisFrame.Clear();
-
         for(int eventIndex = 0; eventIndex < stream.length; eventIndex++)
         {
             var eventType = stream.GetEventType(eventIndex);
@@ -137,23 +128,31 @@ public static class PersistentIdManager
                 {
                     Debug.Log("ObjectChangeKind.CreateGameObjectHierarchy");
                     stream.GetCreateGameObjectHierarchyEvent(eventIndex, out var createEvent);
-                    TrackObjectIds(createEvent.instanceId);
                     var obj = EditorUtility.InstanceIDToObject(createEvent.instanceId);
                     if(obj is GameObject go)
                     {
                         foreach(var comp in go.GetComponents<MonoBehaviour>())
                         {
-                            if(comp != null && !processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+                            if(comp != null && !processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
                         }
+                        
+                        // Track ids after processing
+                        TrackObjectIds(createEvent.instanceId);
                     }
                     else if(obj is Component comp && comp is MonoBehaviour monoBehaviour)
                     {
-                        if(!processedComponentsThisFrame.Contains(monoBehaviour.GetInstanceID()))
+                        if(!processedComponentsThisDomainCycle.Contains(monoBehaviour.GetInstanceID()))
                         {
                             ProcessComponentForPersistentIds(monoBehaviour);
+                        }
+
+                        // Track after processing
+                        if(monoBehaviour.gameObject != null)
+                        {
+                            TrackObjectIds(monoBehaviour.gameObject.GetInstanceID());
                         }
                     }
                 } break;
@@ -276,33 +275,32 @@ public static class PersistentIdManager
                     }
                     else
                     {
-                        TrackObjectIds(changeEvent.instanceId);
-
                         // Handle component property change
                         if(obj is MonoBehaviour comp)
                         {
-                            if(!processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+                            if(!processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
-                                // Also track at the GameObject level to ensure proper cleanup
-                                if(comp.gameObject != null)
-                                {
-                                    TrackObjectIds(comp.gameObject.GetInstanceID());
-                                }
+                            }
+                            
+                            // Track at the GameObject & component level
+                            if(comp.gameObject != null)
+                            {
+                                TrackObjectIds(comp.gameObject.GetInstanceID());
                             }
                         }
                         else if(obj is GameObject go)
                         {
-                            // Always update tracking for the GameObject when its properties change
-                            TrackObjectIds(go.GetInstanceID());
-
                             foreach(var component in go.GetComponents<MonoBehaviour>())
                             {
-                                if(component != null && !processedComponentsThisFrame.Contains(component.GetInstanceID()))
+                                if(component != null && !processedComponentsThisDomainCycle.Contains(component.GetInstanceID()))
                                 {
                                     ProcessComponentForPersistentIds(component);
                                 }
                             }
+
+                            // Track after processing
+                            TrackObjectIds(go.GetInstanceID());
                         }
                     }
                 } break;
@@ -315,9 +313,6 @@ public static class PersistentIdManager
 
                     if(obj is GameObject go)
                     {
-                        // Clear processed components so we re-evaluate all attached components
-                        processedComponentsThisFrame.Clear();
-
                         int instanceId = structureEvent.instanceId;
 
                         // Gather current PersistentIds after structure change
@@ -371,18 +366,20 @@ public static class PersistentIdManager
                 {
                     Debug.Log("ObjectChangeKind.ChangeGameObjectStructureHierarchy");
                     stream.GetChangeGameObjectStructureHierarchyEvent(eventIndex, out var structureEvent);
-                    TrackObjectIds(structureEvent.instanceId);
                     var obj = EditorUtility.InstanceIDToObject(structureEvent.instanceId);
 
                     if(obj is GameObject go)
                     {
                         foreach(var comp in go.GetComponents<MonoBehaviour>())
                         {
-                            if(comp != null && !processedComponentsThisFrame.Contains(comp.GetInstanceID()))
+                            if(comp != null && !processedComponentsThisDomainCycle.Contains(comp.GetInstanceID()))
                             {
                                 ProcessComponentForPersistentIds(comp);
                             }
                         }
+
+                        // Track after processing
+                        TrackObjectIds(structureEvent.instanceId);
                     }
                 } break;
 
@@ -508,7 +505,7 @@ public static class PersistentIdManager
             }
         }
 
-        registry?.ValidateRegistry();
+        registry.ValidateRegistry();
     }
     private static void TrackObjectIds(int instanceId)
     {
@@ -672,9 +669,9 @@ public static class PersistentIdManager
         if(component == null) return;
 
         var componentId = component.GetInstanceID();
-        if(processedComponentsThisFrame.Contains(componentId)) return;
+        if(processedComponentsThisDomainCycle.Contains(componentId)) return;
 
-        processedComponentsThisFrame.Add(componentId);
+        processedComponentsThisDomainCycle.Add(componentId);
         var so = new SerializedObject(component);
 
         if(PrefabUtility.IsPartOfPrefabAsset(component))
