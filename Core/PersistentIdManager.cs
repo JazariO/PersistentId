@@ -95,7 +95,6 @@ namespace Proselyte.PersistentIdSystem
         }
         private static void SubscribeToCallbacks()
         {
-            Debug.Log("[PersistentIdManager] SubscribingToCallbacks()");
             ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
             ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
 
