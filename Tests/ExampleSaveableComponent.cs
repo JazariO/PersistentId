@@ -58,21 +58,4 @@ public class ExampleSaveableComponent : MonoBehaviour
         SavedPosition = data.position;
         transform.position = data.position;
     }
-
-#if UNITY_EDITOR
-    [UnityEditor.MenuItem("Tools/Test PersistentId")]
-    private static void TestPersistentId()
-    {
-        var selected = UnityEditor.Selection.activeGameObject;
-        if(selected != null)
-        {
-            var component = selected.GetComponent<ExampleSaveableComponent>();
-            if(component != null)
-            {
-                Debug.Log($"PersistentId: {component.persistentId}");
-                Debug.Log($"Is Valid: {component.persistentId.IsValid}");
-            }
-        }
-    }
-#endif
 }
