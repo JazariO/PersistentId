@@ -1,8 +1,5 @@
 using System.Collections.Generic;
-using System.Linq;
-using UnityEditor;
 using UnityEngine;
-using static UnityEngine.GraphicsBuffer;
 
 /// <summary>
 /// Scriptable Object that maintains a registry of all registered persistent IDs.
@@ -14,7 +11,7 @@ public class PersistentIdRegistrySO : ScriptableObject
     [SerializeField]
     private List<uint> registeredIds = new List<uint>();
 
-    private HashSet<uint> idHashSet;
+    private HashSet<uint> idHashSet; // NOTE(Jazz): May need to change to a better structure for storing values.
 
     private void OnEnable()
     {
@@ -26,6 +23,11 @@ public class PersistentIdRegistrySO : ScriptableObject
         if(idHashSet == null)
         {
             idHashSet = new HashSet<uint>(registeredIds);
+        } else if(idHashSet.Count >= int.MaxValue)
+        {
+            Debug.LogError($"Persistent ID Registry has reached the practical upper limit of {int.MaxValue} entries due to HashSet limitations." +
+                $"Do you really need this many ID values? " +
+                $"You may need to shard the idHashSet or consider alternative storage strategies.");
         }
     }
 

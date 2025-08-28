@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.Linq;
+using Unity.VisualScripting;
 
 public static class PersistentIdManager
 {
@@ -429,6 +430,18 @@ public static class PersistentIdManager
                         // Handle component property change
                         if(obj is MonoBehaviour comp)
                         {
+                            // Determine which editor stage control is in
+                            StageHandle mainStage = StageUtility.GetMainStageHandle();
+                            StageHandle currentStage = StageUtility.GetStageHandle(comp.gameObject);
+                            if(currentStage != mainStage)
+                            {
+                                PrefabStage prefabStage = PrefabStageUtility.GetPrefabStage(comp.gameObject);
+                                if(prefabStage != null)
+                                {
+                                    // prefab stage detected.
+                                    break;
+                                }
+                            }
                             // Prevent return visits for the same components
                             if(!processedComponentsThisSession.Contains(comp.GetInstanceID()))
                             {
