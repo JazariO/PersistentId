@@ -1,0 +1,44 @@
+name: Update package.json Version
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on tags like v1.0.0, v0.2.1-alpha02, etc.
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allow writing to the repo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # Use built-in token
+          ref: main  # Replace with your default branch if not 'main'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Node.js version for npm
+
+      - name: Get tag version
+        id: get_version
+        run: echo "TAG_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Update package.json version
+        run: |
+          VERSION=${TAG_VERSION#v}
+          npm version $VERSION --no-git-tag-version
+        env:
+          TAG_VERSION: ${{ env.TAG_VERSION }}
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add package.json
+          git commit -m "chore: update package.json to ${TAG_VERSION}"
+          git push
+        env:
+          TAG_VERSION: ${{ env.TAG_VERSION }}
