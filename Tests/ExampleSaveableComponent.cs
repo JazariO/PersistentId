@@ -1,4 +1,5 @@
 using UnityEngine;
+using Proselyte.PersistentIdSystem;
 
 public class ExampleSaveableComponent : MonoBehaviour
 {
