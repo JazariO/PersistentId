@@ -17,12 +17,6 @@ namespace Proselyte.PersistentIdSystem
         private static Dictionary<int, HashSet<uint>> trackedObjectIds = new Dictionary<int, HashSet<uint>>();
         private static HashSet<int> processedComponentsThisSession = new HashSet<int>();
 
-        static PersistentIdManager()
-        {
-            InitializeRegistry();
-            SubscribeToCallbacks();
-        }
-
         [MenuItem("Tools/Persistent Id/Print Processed Component Ids", false, 0)]
         public static void PrintProcessedComponentIds()
         {
