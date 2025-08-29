@@ -1,10 +1,11 @@
 using UnityEngine;
 using Proselyte.PersistentIdSystem;
+using System.Collections.Generic;
 
 public class ExampleSaveableComponent : MonoBehaviour
 {
     [Header("Persistent Identification")]
-    [SerializeField] private PersistentId persistentId = new PersistentId();
+    [SerializeField] private PersistentId persistentId;
 
     [Header("Saveable Data")]
     [SerializeField] private int score = 0;

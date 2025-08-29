@@ -388,8 +388,71 @@ namespace Proselyte.PersistentIdSystem
                                 }
 
                                 var componentInstanceId = comp.GetInstanceID();
-                                if(!processedComponentsThisSession.Contains(componentInstanceId))
+
+                                // Check if this component had tracked IDs before this change event
+                                bool hadTrackedIds = trackedComponentIds.ContainsKey(componentInstanceId);
+                                var previouslyTrackedIds = hadTrackedIds ? new HashSet<uint>(trackedComponentIds[componentInstanceId]) : new HashSet<uint>();
+
+                                // Check current state of the component
+                                var currentIds = new HashSet<uint>();
+                                CollectIdsFromComponent(comp, currentIds);
+
+                                // Detect if persistent IDs were reverted to 0 (lost tracked IDs but component still exists)
+                                bool lostTrackedIds = hadTrackedIds && currentIds.Count == 0 && previouslyTrackedIds.Count > 0;
+
+                                if(lostTrackedIds)
                                 {
+                                    Debug.Log($"Detected revert operation on {comp.name} - restoring {previouslyTrackedIds.Count} persistent IDs");
+
+                                    // This looks like a revert operation - restore the tracked IDs
+                                    SerializedObject so = new SerializedObject(comp);
+                                    SerializedProperty iterator = so.GetIterator();
+                                    bool hasChanges = false;
+                                    int idIndex = 0;
+                                    var orderedIds = previouslyTrackedIds.ToList(); // Convert to list for ordered access
+
+                                    while(iterator.NextVisible(true) && idIndex < orderedIds.Count)
+                                    {
+                                        if(iterator.propertyType == SerializedPropertyType.Generic &&
+                                            iterator.type == "PersistentId")
+                                        {
+                                            var idProp = iterator.FindPropertyRelative("id");
+                                            if(idProp != null && idProp.uintValue == 0)
+                                            {
+                                                uint restoredId = orderedIds[idIndex];
+                                                idProp.uintValue = restoredId;
+                                                hasChanges = true;
+                                                idIndex++;
+
+                                                if(!IsIdRegistered(restoredId))
+                                                {
+                                                    RegisterId(restoredId);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if(hasChanges)
+                                    {
+                                        so.ApplyModifiedProperties();
+
+                                        // Critical: Re-establish as prefab override if this is a prefab instance
+                                        if(PrefabUtility.IsPartOfPrefabInstance(comp))
+                                        {
+                                            PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
+                                            Debug.Log($"Re-established prefab instance overrides for persistent IDs on {comp.name}");
+                                        }
+
+                                        // Restore tracking
+                                        trackedComponentIds[componentInstanceId] = previouslyTrackedIds;
+                                        processedComponentsThisSession.Add(componentInstanceId);
+
+                                        EditorUtility.SetDirty(comp);
+                                    }
+                                }
+                                else if(!processedComponentsThisSession.Contains(componentInstanceId))
+                                {
+                                    // Normal processing path
                                     ProcessComponentForPersistentIds(comp);
                                 }
                             }
@@ -508,75 +571,142 @@ namespace Proselyte.PersistentIdSystem
                     case ObjectChangeKind.UpdatePrefabInstances:
                     {
                         Debug.Log("ObjectChangeKind.UpdatePrefabInstances");
+                        bool hasProcessedPrefabAsset = false;
                         stream.GetUpdatePrefabInstancesEvent(eventIndex, out var updatePrefabInstancesEvent);
+
+                        // Preserve the existing tracking data with deterministic order
+                        var preservedTracking = new Dictionary<int, List<uint>>();
+
+                        // First pass: collect IDs in serialized property order
                         foreach(int instanceId in updatePrefabInstancesEvent.instanceIds)
                         {
-                            UnityEngine.Object obj = EditorUtility.InstanceIDToObject(instanceId);
-                            if(obj is GameObject prefabInstance)
+                            GameObject prefabInstance = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+                            if(prefabInstance == null) continue;
+
+                            foreach(var comp in prefabInstance.GetComponentsInChildren<MonoBehaviour>())
                             {
-                                foreach(var comp in prefabInstance.GetComponentsInChildren<MonoBehaviour>())
+                                if(comp == null) continue;
+
+                                int componentInstanceId = comp.GetInstanceID();
+                                if(!trackedComponentIds.ContainsKey(componentInstanceId)) continue;
+
+                                var orderedIds = new List<uint>();
+                                SerializedObject so = new SerializedObject(comp);
+                                SerializedProperty iterator = so.GetIterator();
+
+                                while(iterator.NextVisible(true))
                                 {
-                                    if(comp == null) continue;
-                                    SerializedObject so = new SerializedObject(comp);
-
-                                    SerializedProperty iterator = so.GetIterator();
-                                    while(iterator.NextVisible(true))
+                                    if(iterator.propertyType == SerializedPropertyType.Generic &&
+                                        iterator.type == "PersistentId")
                                     {
-                                        if(iterator.propertyType == SerializedPropertyType.Generic &&
-                                            iterator.type == "PersistentId")
+                                        var idProp = iterator.FindPropertyRelative("id");
+                                        if(idProp != null && idProp.uintValue != 0)
                                         {
-                                            var idProp = iterator.FindPropertyRelative("id");
-                                            if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
+                                            orderedIds.Add(idProp.uintValue);
+                                        }
+                                    }
+                                }
+
+                                if(orderedIds.Count > 0)
+                                {
+                                    preservedTracking[componentInstanceId] = orderedIds;
+                                }
+                            }
+                        }
+
+                        foreach(int instanceId in updatePrefabInstancesEvent.instanceIds)
+                        {
+                            GameObject prefabInstance = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
+                            if(prefabInstance == null) continue;
+
+                            // Process prefab asset clearing (first instance only)
+                            if(!hasProcessedPrefabAsset)
+                            {
+                                MonoBehaviour firstComp = prefabInstance.GetComponentInChildren<MonoBehaviour>();
+                                if(firstComp != null)
+                                {
+                                    MonoBehaviour prefabAssetComponent = PrefabUtility.GetCorrespondingObjectFromOriginalSource(firstComp);
+                                    if(prefabAssetComponent != null)
+                                    {
+                                        string assetPath = AssetDatabase.GetAssetPath(prefabAssetComponent);
+                                        if(!string.IsNullOrEmpty(assetPath))
+                                        {
+                                            GameObject prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+                                            try
                                             {
-                                                uint currentId = idProp.uintValue;
-                                                if(currentId != 0)
+                                                foreach(var assetComp in prefabRoot.GetComponentsInChildren<MonoBehaviour>(true))
                                                 {
-                                                    idProp.uintValue = 0;
-                                                    so.ApplyModifiedProperties();
+                                                    if(assetComp == null) continue;
+                                                    ClearIdsFromPrefabAsset(new SerializedObject(assetComp));
+                                                }
+                                                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+                                            }
+                                            finally
+                                            {
+                                                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                                            }
+                                            hasProcessedPrefabAsset = true;
+                                        }
+                                    }
+                                }
+                            }
 
-                                                    idProp.uintValue = currentId;
-                                                    so.ApplyModifiedProperties();
+                            // Now restore IDs to instances using preserved tracking data
+                            foreach(var comp in prefabInstance.GetComponentsInChildren<MonoBehaviour>())
+                            {
+                                if(comp == null) continue;
 
-                                                    PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
+                                int componentInstanceId = comp.GetInstanceID();
 
-                                                    MonoBehaviour prefabAsset = PrefabUtility.GetCorrespondingObjectFromOriginalSource(comp);
-                                                    string assetPath = AssetDatabase.GetAssetPath(prefabAsset);
-                                                    if(!string.IsNullOrEmpty(assetPath))
+                                // Check if this component had tracked IDs before asset processing
+                                if(preservedTracking.TryGetValue(componentInstanceId, out List<uint> preservedIds))
+                                {
+                                    SerializedObject so = new SerializedObject(comp);
+                                    SerializedProperty iterator = so.GetIterator();
+                                    bool hasChanges = false;
+
+                                    // Collect current IDs from the component
+                                    var currentIds = new HashSet<uint>();
+                                    CollectIdsFromComponent(comp, currentIds);
+
+                                    // If the component lost its IDs, restore them from preserved tracking
+                                    if(currentIds.Count == 0 && preservedIds.Count > 0)
+                                    {
+                                        // Restore the preserved IDs back to component properties in order
+                                        int idIndex = 0;
+
+                                        while(iterator.NextVisible(true))
+                                        {
+                                            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                                                iterator.type == "PersistentId")
+                                            {
+                                                var idProp = iterator.FindPropertyRelative("id");
+                                                if(idProp != null && idProp.uintValue == 0 && idIndex < preservedIds.Count)
+                                                {
+                                                    uint preservedId = preservedIds[idIndex];
+                                                    idProp.uintValue = preservedId;
+                                                    hasChanges = true;
+                                                    idIndex++;
+
+                                                    if(!IsIdRegistered(preservedId))
                                                     {
-                                                        GameObject prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
-                                                        try
-                                                        {
-                                                            foreach(var assetComp in prefabRoot.GetComponentsInChildren<MonoBehaviour>(true))
-                                                            {
-                                                                if(assetComp == null) continue;
-
-                                                                SerializedObject assetSO = new SerializedObject(assetComp);
-                                                                SerializedProperty assetIterator = assetSO.GetIterator();
-
-                                                                while(assetIterator.NextVisible(true))
-                                                                {
-                                                                    if(assetIterator.propertyType == SerializedPropertyType.Generic &&
-                                                                        assetIterator.type == "PersistentId")
-                                                                    {
-                                                                        var assetIdProp = assetIterator.FindPropertyRelative("id");
-                                                                        if(assetIdProp != null && assetIdProp.propertyType == SerializedPropertyType.Integer)
-                                                                        {
-                                                                            assetIdProp.uintValue = 0;
-                                                                            assetSO.ApplyModifiedProperties();
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-
-                                                            PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
-                                                        }
-                                                        finally
-                                                        {
-                                                            PrefabUtility.UnloadPrefabContents(prefabRoot);
-                                                        }
+                                                        RegisterId(preservedId);
                                                     }
                                                 }
                                             }
+                                        }
+
+                                        if(hasChanges)
+                                        {
+                                            so.ApplyModifiedProperties();
+                                            // Mark as prefab instance override
+                                            PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
+
+                                            // Restore tracking (convert back to HashSet for existing system)
+                                            trackedComponentIds[componentInstanceId] = new HashSet<uint>(preservedIds);
+                                            processedComponentsThisSession.Add(componentInstanceId);
+
+                                            Debug.Log($"Restored {preservedIds.Count} PersistentIds in order as overrides on {comp.name}");
                                         }
                                     }
                                 }
