@@ -45,15 +45,21 @@ namespace Proselyte.PersistentIdSystem
             Debug.Log("Processed Components This Session Cleared.");
         }
 
+
         [InitializeOnLoadMethod]
         private static void Initialize()
         {
             Debug.Log("[PersistentIdManager] Initializing()");
+
+            AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
+
             EditorApplication.delayCall += () =>
             {
                 InitializeRegistry();
                 SubscribeToCallbacks();
-                ScanAllObjectsForTracking();
             };
         }
 
@@ -101,17 +107,72 @@ namespace Proselyte.PersistentIdSystem
         {
             ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
             ObjectChangeEvents.changesPublished += OnObjectChangesPublished;
-
             Undo.undoRedoPerformed -= OnUndoRedoPerformed;
             Undo.undoRedoPerformed += OnUndoRedoPerformed;
-
             Undo.postprocessModifications -= OnPostProcessModifications;
             Undo.postprocessModifications += OnPostProcessModifications;
-
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorSceneManager.sceneClosing -= OnSceneClosing;
             EditorSceneManager.sceneClosing += OnSceneClosing;
+        }
+
+        private static void OnBeforeAssemblyReload()
+        {
+            // NOTE(Jazz): We can't trust that previously processed components have been updated correctly,
+            // since the user could make a change to a script, like adding another PersistentId field.
+            // In that case we'd need to re-process that component to generate a unqiue id for the new field.
+            Debug.Log("Before Domain Reload: Clearing processed components this session");
+            //processedComponentsThisSession.Clear();
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendLine("---- Tracked Component Ids Before Domain Reload ----");
+            foreach(var trackedComponent in trackedComponentIds)
+            {
+                sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
+                foreach(var persistentId in trackedComponent.Value)
+                {
+                    sb.Append($"{persistentId.ToString()}, ");
+                }
+                sb.Append("\n");
+            }
+            Debug.Log(sb.ToString());
+        }
+
+        [MenuItem("Tools/PersistentId/Print Tracked Component Ids")]
+        private static void PrintTrackedComponentIds()
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendLine("---- Tracked Component Ids ----");
+            foreach(var trackedComponent in trackedComponentIds)
+            {
+                sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
+                foreach(var persistentId in trackedComponent.Value)
+                {
+                    sb.Append($"{persistentId.ToString()}, ");
+                }
+                sb.Append("\n");
+            }
+            Debug.Log(sb.ToString());
+        }
+
+        private static void OnAfterAssemblyReload()
+        {
+            Debug.Log("After Domain Reload: performing ");
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.AppendLine("---- Tracked Component Ids ----");
+            foreach(var trackedComponent in trackedComponentIds)
+            {
+                sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
+                foreach (var persistentId in trackedComponent.Value)
+                {
+                    sb.Append($"{persistentId.ToString()}, ");
+                }
+                sb.Append("\n");
+            }
+            Debug.Log(sb.ToString());
+            // 
+
+
         }
 
         public static void OnSceneOpened(Scene scene, OpenSceneMode mode)
@@ -220,28 +281,6 @@ namespace Proselyte.PersistentIdSystem
             }
 
             return modifications;
-        }
-
-        private static void ScanAllObjectsForTracking()
-        {
-            for(int i = 0; i < SceneManager.sceneCount; i++)
-            {
-                var scene = SceneManager.GetSceneAt(i);
-                if(!scene.isLoaded) continue;
-
-                var rootGos = scene.GetRootGameObjects();
-                foreach(var root in rootGos)
-                {
-                    var components = root.GetComponentsInChildren<MonoBehaviour>(true);
-                    foreach(var comp in components)
-                    {
-                        if(comp != null)
-                        {
-                            TrackComponentIds(comp);
-                        }
-                    }
-                }
-            }
         }
 
         public static bool RegisterId(uint id)
@@ -376,6 +415,7 @@ namespace Proselyte.PersistentIdSystem
                         {
                             if(obj is MonoBehaviour comp)
                             {
+#region Detect Prefab Asset Editor
                                 StageHandle mainStage = StageUtility.GetMainStageHandle();
                                 StageHandle currentStage = StageUtility.GetStageHandle(comp.gameObject);
                                 if(currentStage != mainStage)
@@ -386,7 +426,7 @@ namespace Proselyte.PersistentIdSystem
                                         break;
                                     }
                                 }
-
+#endregion
                                 var componentInstanceId = comp.GetInstanceID();
 
                                 // Check if this component had tracked IDs before this change event
