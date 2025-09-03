@@ -10,7 +10,7 @@ namespace Proselyte.PersistentIdSystem
     public struct PersistentId
     {
         [SerializeField]
-        private uint id;
+        internal uint id;
 
         public uint Id => id;
 
