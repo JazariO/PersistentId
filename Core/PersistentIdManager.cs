@@ -204,40 +204,42 @@ namespace Proselyte.PersistentIdSystem
 
         private static void OnBeforeAssemblyReload()
         {
+            Debug.Log("Before Domain Reload.");
+
             // NOTE(Jazz): We can't trust that previously processed components have been updated correctly,
             // since the user could make a change to a script, like adding another PersistentId field.
             // In that case we'd need to re-process each component to generate a unqiue id for any new fields.
-            Debug.Log("Before Domain Reload.");
 
-            // grab the scriptable object from ../ProjectSettings and overwrite its value with the current trackedComponentsIds dictionary
-            string fullPath = Path.Combine(Application.dataPath, "../" + TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-            Debug.Log("Writing tracked component ids data to JSON file at: " + fullPath);
-            
-            // create settings json file if it doesn't exist
-            trackedComponentIds ??= new TrackedComponentIds();
 
-            try
-            {
-                var wrapper = new TrackedComponentIdsWrapper();
-                foreach(var kvp in trackedComponentIds.trackedComponentIds)
+            // Write the tracked components ids to ../ProjectSettings and overwrite its value with the current trackedComponentsIds dictionary
+            { 
+                string fullPath = Path.Combine(Application.dataPath, "../" + TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+                Debug.Log("Writing tracked component ids data to JSON file at: " + fullPath);
+
+                // create settings json file if it doesn't exist
+                trackedComponentIds ??= new TrackedComponentIds();
+
+                try
                 {
-                    wrapper.trackedComponentEntries.Add(new TrackedComponentEntry
+                    var wrapper = new TrackedComponentIdsWrapper();
+                    foreach(var kvp in trackedComponentIds.trackedComponentIds)
                     {
-                        instanceId = kvp.Key,
-                        persistentIds = new List<uint>(kvp.Value)
-                    });
+                        wrapper.trackedComponentEntries.Add(new TrackedComponentEntry
+                        {
+                            instanceId = kvp.Key,
+                            persistentIds = new List<uint>(kvp.Value)
+                        });
+                    }
+
+                    string json = JsonUtility.ToJson(wrapper, true);
+                    System.IO.File.WriteAllText(fullPath, json);
+                    Debug.Log($"Updated JSON file at {fullPath}");
                 }
-
-                string json = JsonUtility.ToJson(wrapper, true);
-                System.IO.File.WriteAllText(fullPath, json);
-                Debug.Log($"Updated JSON file at {fullPath}");
+                catch(System.Exception ex)
+                {
+                    Debug.LogError($"Error writing to {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
+                }
             }
-            catch(System.Exception ex)
-            {
-                Debug.LogError($"Error writing to {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
-            }
-
-            // if key has a value -- session has begun, save current trackedComponentIds dictionary to ScriptableObject
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids Before Domain Reload ----");
@@ -273,7 +275,6 @@ namespace Proselyte.PersistentIdSystem
         private static void OnAfterAssemblyReload()
         {
             Debug.Log("After Domain Reload: performing ");
-            //ReadTrackedIdDataFromJSON();
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids After Domain Reload ----");
@@ -289,7 +290,6 @@ namespace Proselyte.PersistentIdSystem
             Debug.Log(sb.ToString());
         }
 
-        // TODO(Jazz): Compress with guard statements rather than deep nesting.
         public static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
             Debug.Log("Editor Scene Opened.");
@@ -301,61 +301,57 @@ namespace Proselyte.PersistentIdSystem
                     if(comp == null) continue;
 
                     var componentInstanceId = comp.GetInstanceID();
-                    if(!processedComponentsThisDomainCycle.Contains(componentInstanceId)) // NOTE(Jazz): this check probably not required
+                    TrackComponentIds(comp);
+
+                    // Register existing IDs
+                    var so = new SerializedObject(comp);
+                    var iterator = so.GetIterator();
+
+                    while(iterator.NextVisible(true))
                     {
-                        TrackComponentIds(comp);
-
-                        // Register existing IDs
-                        var so = new SerializedObject(comp);
-                        var iterator = so.GetIterator();
-
-                        while(iterator.NextVisible(true))
-                        {
-                            if(!(iterator.propertyType == SerializedPropertyType.Generic && 
-                                 iterator.type == nameof(PersistentId))) continue; // NAND
+                        if(!(iterator.propertyType == SerializedPropertyType.Generic && 
+                                iterator.type == nameof(PersistentId))) continue; // NAND
                             
-                            var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
-                            if(!(idProp != null && idProp.uintValue != 0)) continue; // NAND
+                        var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                        if(!(idProp != null && idProp.uintValue != 0)) continue; // NAND
                             
-                            if(!IsIdRegistered(idProp.uintValue))
-                                RegisterId(idProp.uintValue);
-                        }
-
-                        processedComponentsThisDomainCycle.Add(componentInstanceId);
+                        if(!IsIdRegistered(idProp.uintValue))
+                            RegisterId(idProp.uintValue);
                     }
+
+                    processedComponentsThisDomainCycle.Add(componentInstanceId);
                 }
             }
 
             Debug.Log($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
         }
 
-        // TODO(Jazz): This needs to remove only the tracked components from the scene that will be closed.
-        //             Use scene.GetRootGameObjects() [another big heavy scan, but only on scene close in editor]
         public static void OnSceneClosing(Scene scene, bool removingScene)
         {
             Debug.Log("Editor Scene Closing.");
-            var componentsToRemove = new List<int>();
-
-            foreach(var componentInstanceId in trackedComponentIds.trackedComponentIds.Keys.ToList())
+            var component_ids_to_remove = new List<int>();
+            foreach(var root in scene.GetRootGameObjects()) // NOTE(Jazz): Another big heavy scan, but only on scene close in editor
             {
-                var obj = EditorUtility.InstanceIDToObject(componentInstanceId);
-                if(obj is MonoBehaviour comp && comp.gameObject.scene == scene)
+                var components = root.GetComponentsInChildren<MonoBehaviour>(true);
+                foreach(var comp in components)
                 {
-                    componentsToRemove.Add(componentInstanceId);
-                }
-                else if(obj == null)
-                {
-                    componentsToRemove.Add(componentInstanceId);
+                    if(comp == null) continue;
+
+                    var componentInstanceId = comp.GetInstanceID();
+                    component_ids_to_remove.Add(componentInstanceId);
                 }
             }
 
-            foreach(var componentId in componentsToRemove)
+            for(int componentIndex = component_ids_to_remove.Count - 1;
+                componentIndex >= 0;
+                componentIndex--)
             {
-                trackedComponentIds.trackedComponentIds.Remove(componentId);
-                processedComponentsThisDomainCycle.Remove(componentId);
+                var curr_comp = component_ids_to_remove[componentIndex];
+                if(trackedComponentIds.trackedComponentIds.ContainsKey(curr_comp))
+                {
+                    trackedComponentIds.trackedComponentIds.Remove(curr_comp);
+                }
             }
-
-            Debug.Log($"Cleaned up {componentsToRemove.Count} tracked component IDs from scene '{scene.name}'");
         }
 
         private static UndoPropertyModification[] OnPostProcessModifications(UndoPropertyModification[] modifications)
