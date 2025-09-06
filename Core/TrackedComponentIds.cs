@@ -3,20 +3,20 @@ using System.Collections.Generic;
 namespace Proselyte.PersistentIdSystem
 {
     [System.Serializable]
-    public class TrackedComponentIds
+    internal class TrackedComponentIds
     {
         public Dictionary<int, HashSet<uint>> trackedComponentIds = new();
     }
 
     [System.Serializable]
-    public class TrackedComponentEntry
+    internal class TrackedComponentEntry
     {
         public int instanceId;
         public List<uint> persistentIds;
     }
 
     [System.Serializable]
-    public class TrackedComponentIdsWrapper
+    internal class TrackedComponentIdsWrapper
     {
         public List<TrackedComponentEntry> trackedComponentEntries = new List<TrackedComponentEntry>();
     }
