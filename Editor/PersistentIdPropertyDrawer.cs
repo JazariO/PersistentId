@@ -126,5 +126,5 @@ namespace Proselyte.PersistentIdSystem
             return EditorGUIUtility.singleLineHeight;
         }
     }
-#endif
 }
+#endif
