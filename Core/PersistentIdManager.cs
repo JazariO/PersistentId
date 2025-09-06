@@ -69,7 +69,6 @@ namespace Proselyte.PersistentIdSystem
             EditorApplication.delayCall -= OnDelayCallInit;
             EditorApplication.delayCall += OnDelayCallInit;
         }
-
         private static void OnDelayCallInit()
         {
             if(registry == null)
@@ -130,7 +129,7 @@ namespace Proselyte.PersistentIdSystem
 
             // NOTE(Jazz): Cannot lay trust in previously processed components being updated correctly,
             // since the user could make a change to a script, such as adding another PersistentId field.
-            // In that case, re-process each component to generate a unqiue id for any new fields,
+            // In that case, re-process each component to generate a unique id for any new fields,
             // or unregister any missing persistent ids which might be missing from the tracked component.
             //
             // Detect if the tracked component id key has been:
@@ -166,76 +165,62 @@ namespace Proselyte.PersistentIdSystem
 
                     var target_id = idProp.uintValue;
 
-                    // Add current ID to found set (this was missing!)
+                    // Add current ID to found set
                     if(target_id != 0)
                     {
                         foundIds.Add(target_id);
                         currentComponentIds.Add(target_id);
                     }
 
-                    // Check for New additional persistent id properties
-                    if(!tracked_comp_kvp.Value.Contains(target_id))
+                    // Handle different scenarios for persistent ID fields
+                    if(target_id == 0)
                     {
-                        // the component has changed, it contains a persistent id value that was not stored
-                        // previously in the tracked component ids dictionary
-                        // either new generated value
-                        if(target_id > 0)
+                        // This field has no ID assigned - generate one
+                        var uniquePersistentId = GenerateUniqueId();
+                        idProp.uintValue = uniquePersistentId;
+                        so.ApplyModifiedProperties();
+                        addedIds.Add(uniquePersistentId);
+                        currentComponentIds.Add(uniquePersistentId);
+                        foundIds.Add(uniquePersistentId);
+                        registry.RegisterId(target_component.gameObject, uniquePersistentId);
+                        Debug.Log($"Generated new {nameof(PersistentId)} for field: 0x{uniquePersistentId:X8}");
+                    }
+                    else if(!tracked_comp_kvp.Value.Contains(target_id))
+                    {
+                        // This field has an ID but it's not tracked - could be new field or conflict
+                        if(IsIdRegistered(target_id))
                         {
-                            if(IsIdRegistered(target_id))
-                            {
-                                // Possible duplicate. Generate new unique ID
-                                var uniquePersistentId = GenerateUniqueId();
-                                idProp.uintValue = uniquePersistentId;
-                                so.ApplyModifiedProperties();
-                                addedIds.Add(uniquePersistentId);
-                                currentComponentIds.Remove(target_id); // Remove old
-                                currentComponentIds.Add(uniquePersistentId); // Add new
-                                foundIds.Remove(target_id); // Remove old from found
-                                foundIds.Add(uniquePersistentId); // Add new to found
-                            }
-                            else
-                            {
-                                // New added persistent id. valid and not registered yet.
-                                var uniquePersistentId = GenerateUniqueId();
-                                idProp.uintValue = uniquePersistentId;
-                                so.ApplyModifiedProperties();
-                                addedIds.Add(uniquePersistentId);
-                                currentComponentIds.Remove(target_id); // Remove old
-                                currentComponentIds.Add(uniquePersistentId); // Add new
-                                foundIds.Remove(target_id); // Remove old from found
-                                foundIds.Add(uniquePersistentId); // Add new to found
-                            }
-                        }
-                        // or new default value
-                        else if(target_id == 0)
-                        {
-                            // This is a candidate where the id has not been generated yet,
-                            // lets generate a unique id for it and add it to the tracker
+                            // ID is already registered elsewhere - generate new one to avoid conflict
                             var uniquePersistentId = GenerateUniqueId();
                             idProp.uintValue = uniquePersistentId;
                             so.ApplyModifiedProperties();
                             addedIds.Add(uniquePersistentId);
-                            currentComponentIds.Add(uniquePersistentId);
-                            foundIds.Add(uniquePersistentId);
+                            currentComponentIds.Remove(target_id); // Remove old
+                            currentComponentIds.Add(uniquePersistentId); // Add new
+                            foundIds.Remove(target_id); // Remove old from found
+                            foundIds.Add(uniquePersistentId); // Add new to found
+                            registry.RegisterId(target_component.gameObject, uniquePersistentId);
+                            Debug.Log($"Resolved conflict for field: 0x{target_id:X8} -> 0x{uniquePersistentId:X8}");
+                        }
+                        else
+                        {
+                            // Valid existing ID that just needs to be registered and tracked
+                            // This is likely a field that existed but wasn't properly tracked after domain reload
+                            addedIds.Add(target_id);
+                            RegisterId(target_component.gameObject, target_id);
+                            Debug.Log($"Registered existing {nameof(PersistentId)}: 0x{target_id:X8}");
                         }
                     }
                     else
                     {
-                        // ID is tracked, but check if it was reset to 0
-                        if(target_id == 0)
+                        // ID is already tracked - just ensure it's registered
+                        if(!IsIdRegistered(target_id))
                         {
-                            var uniquePersistentId = GenerateUniqueId();
-                            idProp.uintValue = uniquePersistentId;
-                            so.ApplyModifiedProperties();
-                            addedIds.Add(uniquePersistentId);
-                            currentComponentIds.Add(uniquePersistentId);
-                            foundIds.Add(uniquePersistentId);
-                        }
-                        // If target_id > 0 and is tracked, ensure it's registered
-                        else if(!IsIdRegistered(target_id))
-                        {
+                            // Tracked ID exists but isn't registered - just register it
                             RegisterId(target_component.gameObject, target_id);
+                            Debug.Log($"Re-registered tracked {nameof(PersistentId)}: 0x{target_id:X8}");
                         }
+                        // If target_id > 0 and is both tracked and registered, do nothing - it's fine as-is
                     }
                 }
 
@@ -243,7 +228,7 @@ namespace Proselyte.PersistentIdSystem
                 List<uint> idsToRemove = new List<uint>();
                 foreach(var trackedPersistentId in tracked_comp_kvp.Value)
                 {
-                    if(!currentComponentIds.Contains(trackedPersistentId)) // Use currentComponentIds instead of foundIds
+                    if(!currentComponentIds.Contains(trackedPersistentId))
                     {
                         // Detected mismatch between tracked id and found id. Possibly a removed property.
                         idsToRemove.Add(trackedPersistentId);
@@ -256,6 +241,7 @@ namespace Proselyte.PersistentIdSystem
                     uint curr_id = idsToRemove[removalIndex];
                     trackedComponentIds.trackedComponentIds[tracked_comp_kvp.Key].Remove(curr_id);
                     UnregisterId(curr_id);
+                    Debug.Log($"Removed deleted {nameof(PersistentId)}: 0x{curr_id:X8}");
                 }
 
                 // Track added properties
@@ -449,75 +435,114 @@ namespace Proselyte.PersistentIdSystem
 
 
         }
-
-        public static void OnSceneOpened(Scene scene, OpenSceneMode mode)
+        private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            Debug.Log("Editor Scene Opened."); // NOTE(Jazz): Heavy scan, but only when scene opened in editor.
+            if(!scene.isLoaded) return;
 
-            foreach(var root in scene.GetRootGameObjects())
+            Debug.Log("Editor Scene Opened.");
+
+            // Get all MonoBehaviour components in the scene
+            var rootGameObjects = scene.GetRootGameObjects();
+            var allComponents = new List<MonoBehaviour>();
+
+            foreach(var rootGO in rootGameObjects)
             {
-                var components = root.GetComponentsInChildren<MonoBehaviour>(true);
-                foreach(var comp in components)
+                allComponents.AddRange(rootGO.GetComponentsInChildren<MonoBehaviour>(true));
+            }
+
+            bool sceneModified = false;
+
+            foreach(var component in allComponents)
+            {
+                if(component == null) continue;
+
+                var so = new SerializedObject(component);
+                var iterator = so.GetIterator();
+                bool componentModified = false;
+
+                while(iterator.NextVisible(true))
                 {
-                    if(comp == null) continue;
+                    if(!(iterator.propertyType == SerializedPropertyType.Generic &&
+                         iterator.type == nameof(PersistentId))) continue;
 
-                    int componentInstanceId = comp.GetInstanceID();
+                    var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                    if(idProp == null) continue;
 
-                    // Ensure the component is tracked in this cycle
-                    TrackComponentIds(comp);
-                    processedComponentsThisDomainCycle.Add(componentInstanceId);
+                    uint currentId = idProp.uintValue;
 
-                    // Register existing IDs
-                    var so = new SerializedObject(comp);
-                    var iterator = so.GetIterator();
-
-                    while(iterator.NextVisible(true))
+                    // Handle unassigned fields (value 0)
+                    if(currentId == 0)
                     {
-                        if(!(iterator.propertyType == SerializedPropertyType.Generic &&
-                              iterator.type == nameof(PersistentId))) continue;
+                        uint newId = GenerateUniqueId();
+                        idProp.uintValue = newId;
+                        RegisterId(component.gameObject, newId);
+                        componentModified = true;
+                        sceneModified = true;
+                        Debug.Log($"Generated {nameof(PersistentId)} for scene field: 0x{newId:X8} on {component.name}");
 
-                        var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
-                        if(!(idProp != null && idProp.uintValue != 0)) continue;
+                        // Update tracking
+                        var instanceId = component.GetInstanceID();
+                        if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
+                            trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
+                        trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
+                    }
+                    // Handle duplicate detection for non-zero IDs
+                    else if(registry.IsIdRegisteredGlobally(currentId))
+                    {
+                        string currentSceneGuid = registry.GetSceneGuid(component.gameObject);
 
-                        uint currentId = idProp.uintValue;
-                        string sceneGuid = registry.GetSceneGuid(comp.gameObject);
-
-                        // Check if ID is already registered in another scene
-                        if(registry.IsIdRegisteredGlobally(currentId))
+                        if(registry.IsIdRegisteredInScene(currentSceneGuid, currentId))
                         {
-                            bool alreadyInThisScene = registry.IsIdRegisteredInScene(sceneGuid, currentId);
-
-                            if(!alreadyInThisScene)
-                            {
-                                // Conflict! ID belongs to a different scene.
-                                uint newId = registry.GenerateUniqueId();
-
-                                // Assign new unique value
-                                idProp.uintValue = newId;
-                                so.ApplyModifiedProperties();
-
-                                // Register the new ID
-                                registry.RegisterId(sceneGuid, newId);
-
-                                Debug.LogWarning(
-                                    $"[{nameof(PersistentIdManager)}] Duplicate PersistentId {currentId} detected on " +
-                                    $"{comp.gameObject.name} in scene '{scene.name}'. " +
-                                    $"Generated new ID {newId} (Hex: 0x{newId:X8}).");
-                            }
+                            // This ID already belongs to this scene - just ensure tracking is updated
+                            var instanceId = component.GetInstanceID();
+                            if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
+                                trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
+                            trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
+                            // No need to re-register or modify - it's already correctly set up
                         }
                         else
                         {
-                            // Safe to register normally
-                            registry.RegisterId(sceneGuid, currentId);
+                            // This is a true duplicate from another scene - generate new ID
+                            uint newId = GenerateUniqueId();
+                            idProp.uintValue = newId;
+                            RegisterId(component.gameObject, newId);
+                            componentModified = true;
+                            sceneModified = true;
+
+                            Debug.LogWarning($"[{nameof(PersistentIdManager)}] Duplicate {nameof(PersistentId)} {currentId} detected on {component.name} in scene '{scene.name}'. Generated new ID {newId} (Hex: 0x{newId:X8}).");
+
+                            // Update tracking
+                            var instanceId = component.GetInstanceID();
+                            if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
+                                trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
+                            trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
                         }
                     }
+                    else
+                    {
+                        // Not registered yet - register it and track it
+                        RegisterId(component.gameObject, currentId);
+                        var instanceId = component.GetInstanceID();
+                        if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
+                            trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
+                        trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
+                    }
                 }
+
+                if(componentModified)
+                {
+                    so.ApplyModifiedProperties();
+                    EditorUtility.SetDirty(component);
+                }
+            }
+
+            if(sceneModified)
+            {
+                EditorSceneManager.MarkSceneDirty(scene);
             }
 
             Debug.Log($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
         }
-
-
 
         public static void OnSceneClosing(Scene scene, bool removingScene)
         {
@@ -1204,7 +1229,7 @@ namespace Proselyte.PersistentIdSystem
             {
                 Undo.RecordObject(so.targetObject, $"Assign {nameof(PersistentId)} Values");
 
-                var idsToRegister = new HashSet<uint>();
+                var idsToRegister = new Dictionary<GameObject, HashSet<uint>>();
                 var idsToUnregister = new HashSet<uint>();
                 bool hasChanges = false;
 
@@ -1225,7 +1250,9 @@ namespace Proselyte.PersistentIdSystem
                     {
                         uint newId = GenerateUniqueId();
                         idProp.uintValue = newId;
-                        idsToRegister.Add(newId);
+                        if(!idsToRegister.ContainsKey(component.gameObject))
+                            idsToRegister[component.gameObject] = new HashSet<uint>();
+                        idsToRegister[component.gameObject].Add(newId);
                         hasChanges = true;
 
                         UpdateComponentTracking(componentInstanceId, 0, newId);
@@ -1264,17 +1291,20 @@ namespace Proselyte.PersistentIdSystem
 
                             if(isLegitimateOwner)
                             {
-                                idsToRegister.Add(currentPropPersistentId);
+                                if(!idsToRegister.ContainsKey(component.gameObject))
+                                    idsToRegister[component.gameObject] = new HashSet<uint>();
+                                idsToRegister[component.gameObject].Add(currentPropPersistentId);
                                 UpdateComponentTracking(componentInstanceId, 0, currentPropPersistentId);
                             }
                             else
                             {
                                 // ID conflict detected: this component is a duplicate
                                 uint newId = GenerateUniqueId();
-                                if(newId == 0) continue;
                                 
                                 idProp.uintValue = newId;
-                                idsToRegister.Add(newId);
+                                if(!idsToRegister.ContainsKey(component.gameObject))
+                                    idsToRegister[component.gameObject] = new HashSet<uint>();
+                                idsToRegister[component.gameObject].Add(newId);
                                 hasChanges = true;
 
                                 Debug.Log($"Detected duplicate {nameof(PersistentId)} 0x{currentPropPersistentId:X8} on '{so.targetObject.name}'. Generated new {nameof(PersistentId)}: 0x{newId:X8}");
@@ -1285,7 +1315,9 @@ namespace Proselyte.PersistentIdSystem
                         else
                         {
                             // Not registered yet — safe to register as-is
-                            idsToRegister.Add(currentPropPersistentId);
+                            if(!idsToRegister.ContainsKey(component.gameObject))
+                                idsToRegister[component.gameObject] = new HashSet<uint>();
+                            idsToRegister[component.gameObject].Add(currentPropPersistentId);
                             UpdateComponentTracking(componentInstanceId, 0, currentPropPersistentId);
                             Debug.Log($"Registering existing {nameof(PersistentId)}: 0x{currentPropPersistentId:X8} for {so.targetObject.name}.{iterator.name}");
                         }
@@ -1303,9 +1335,10 @@ namespace Proselyte.PersistentIdSystem
                     UnregisterId(id);
                 }
 
-                foreach(var id in idsToRegister)
+                foreach(var kvp in idsToRegister)
                 {
-                    RegisterId(component.gameObject, id);
+                    foreach(var value in kvp.Value)
+                    RegisterId(kvp.Key.gameObject, value);
                 }
 
                 // Update tracking after processing

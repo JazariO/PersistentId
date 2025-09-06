@@ -67,12 +67,6 @@ namespace Proselyte.PersistentIdSystem
             UnityEditor.EditorUtility.SetDirty(this);
         }
 
-        // TODO(Jazz): call from [InitializeOnLoadMethod] EditorApplication.delayCall in PersistentIdManager class.
-        static void CleanupMissingScenes(PersistentIdRegistrySO registryGuids)
-        {
-
-        }
-
         internal bool IsIdRegisteredInScene(string sceneGuid, uint id)
         {
             InitializeRegistry();
