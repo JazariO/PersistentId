@@ -18,7 +18,10 @@ namespace Proselyte.PersistentIdSystem
         private static TrackedComponentIds trackedComponentIds = new TrackedComponentIds();
         private const string TRACKED_COMPONENT_IDS_JSON_PATH = "ProjectSettings/Packages/com.proselyte/";
         private const string TRACKED_COMPONENT_IDS_JSON_FILE_NAME = "PersistentIdSettings.json";
-        
+
+        private const string INITIALIZED_KEY = "com.proselyte.persistentid.initialized";
+        private const string REGISTRY_ASSET_PATH = "Assets/Settings/PersistentIdRegistrySO.asset";
+
         // NOTE(Jazz): This acts purely as a speed boost to component processing as an early-out guard
         // to avoid reprocessing components. Will be cleared with each domain reload.
         private static HashSet<int> processedComponentsThisDomainCycle = new HashSet<int>();
@@ -87,6 +90,7 @@ namespace Proselyte.PersistentIdSystem
         [InitializeOnLoadMethod]
         public static void Initialize()
         {
+            InitializeOnFirstInstall();
             if(registry == null)
             {
                 Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set in project settings. Skipping initialization.");
@@ -103,6 +107,84 @@ namespace Proselyte.PersistentIdSystem
             EditorApplication.delayCall -= OnDelayCallInit;
             EditorApplication.delayCall += OnDelayCallInit;
         }
+
+        private static void InitializeOnFirstInstall()
+        {
+            // Check the sentinel value in EditorPrefs
+            if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
+            {
+                // Sentinel indicates this is a fresh install
+                Debug.Log("[PersistentIdInitializer] Detected fresh package installation. Setting up PersistentIdRegistrySO.");
+
+                // Check for an existing registry
+                var existingRegistryGUIDs = AssetDatabase.FindAssets("t:" + nameof(PersistentIdRegistrySO));
+                if(existingRegistryGUIDs.Length > 0)
+                {
+                    var existingRegistryPath = AssetDatabase.GUIDToAssetPath(existingRegistryGUIDs[0]);
+                    var existingRegistry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(existingRegistryPath);
+                    if(existingRegistry != null) return;
+                }
+
+                // Create the PersistentIdRegistrySO asset
+                PersistentIdRegistrySO registry = CreateRegistryAsset();
+
+                // Assign the registry to the settings provider
+                if(registry != null && PersistentIdProjectSettings.instance != null)
+                {
+                    PersistentIdProjectSettings.instance.registry = registry;
+                    // Save the settings to ensure the assignment persists
+                    EditorUtility.SetDirty(PersistentIdProjectSettings.instance);
+                    AssetDatabase.SaveAssets();
+                    Debug.Log("[PersistentIdInitializer] Assigned PersistentIdRegistrySO to project settings.");
+                }
+                else
+                {
+                    Debug.LogWarning("[PersistentIdInitializer] Failed to assign PersistentIdRegistrySO. " +
+                        "Ensure PersistentIdProjectSettings is properly set up.");
+                }
+
+                // Set the sentinel to indicate initialization is complete
+                EditorPrefs.SetBool(INITIALIZED_KEY, true);
+                Debug.Log("[PersistentIdInitializer] Package initialization completed.");
+            }
+            else
+            {
+                Debug.Log("[PersistentIdInitializer] Package already initialized, skipping setup.");
+            }
+        }
+
+        private static PersistentIdRegistrySO CreateRegistryAsset()
+        {
+            // Check if the asset already exists
+            PersistentIdRegistrySO registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(REGISTRY_ASSET_PATH);
+            if(registry != null)
+            {
+                Debug.Log("[PersistentIdInitializer] Found existing PersistentIdRegistrySO at " + REGISTRY_ASSET_PATH);
+                return registry;
+            }
+
+            // Create a new PersistentIdRegistrySO
+            registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
+            if(registry == null)
+            {
+                Debug.LogError("[PersistentIdInitializer] Failed to create PersistentIdRegistrySO.");
+                return null;
+            }
+
+            // Ensure the Assets folder exists
+            if(!Directory.Exists("Assets"))
+            {
+                Directory.CreateDirectory("Assets");
+            }
+
+            // Save the asset to the Assets folder
+            AssetDatabase.CreateAsset(registry, REGISTRY_ASSET_PATH);
+            AssetDatabase.SaveAssets();
+            Debug.Log("[PersistentIdInitializer] Created new PersistentIdRegistrySO at " + REGISTRY_ASSET_PATH);
+
+            return registry;
+        }
+
         private static void OnDelayCallInit()
         {
             if(registry == null)
@@ -1537,6 +1619,19 @@ namespace Proselyte.PersistentIdSystem
             {
                 trackedComponentIds.trackedComponentIds.Remove(componentInstanceId);
             }
+        }
+
+        // TODO(Jazz): Remove for release
+        [MenuItem("Tools/Persistent Id/Reset Registry Setup", false, 2)]
+        private static void ResetRegistrySetup()
+        {
+            EditorPrefs.SetBool(INITIALIZED_KEY, false);
+        }
+
+        [MenuItem("Tools/Persistent Id/Print Registry Setup Bool", false, 2)]
+        private static void PrintRegistryBool()
+        {
+            Debug.Log("initialized registry installation key: " + EditorPrefs.GetBool(INITIALIZED_KEY, false));
         }
     }
 }

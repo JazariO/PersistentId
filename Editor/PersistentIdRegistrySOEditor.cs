@@ -179,6 +179,20 @@ namespace Proselyte.PersistentIdSystem
                 EditorGUILayout.LabelField($"Showing {sortedIds.Count} of {registry.RegisteredCount} IDs");
             }
         }
+        public override Texture2D RenderStaticPreview(string assetPath, Object[] subAssets, int width, int height)
+        {
+            // Path to your icon inside the package
+            const string iconPath = "Packages/com.proselyte.persistentid/Editor/Icons/Registry Icon.png";
+
+            Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>(iconPath);
+            if(icon == null)
+                return base.RenderStaticPreview(assetPath, subAssets, width, height);
+
+            // Create a copy of the icon at the correct size
+            Texture2D preview = new Texture2D(width, height);
+            EditorUtility.CopySerialized(icon, preview);
+            return preview;
+        }
     }
 }
 #endif
