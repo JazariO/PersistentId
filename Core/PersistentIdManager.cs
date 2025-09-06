@@ -50,6 +50,40 @@ namespace Proselyte.PersistentIdSystem
             Debug.Log("Processed Components This Session Cleared.");
         }
 
+        public static void ClearTrackingData()
+        {
+            // Clear the in-memory tracked component IDs
+            trackedComponentIds.trackedComponentIds.Clear();
+            processedComponentsThisDomainCycle.Clear();
+
+            // Construct the full path to the tracking JSON file
+            string fullPath = Path.Combine(Application.dataPath, "../" +
+                TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+
+            // Delete the JSON file if it exists
+            try
+            {
+                if(File.Exists(fullPath))
+                {
+                    File.Delete(fullPath);
+                    Debug.Log($"Deleted tracking file at {fullPath}");
+                }
+                else
+                {
+                    Debug.Log("No tracking file found to delete.");
+                }
+            }
+            catch(System.Exception ex)
+            {
+                Debug.LogError($"Failed to delete tracking file at {fullPath}: {ex.Message}");
+            }
+
+            // Clear session state
+            SessionState.SetBool("sessionActive", false);
+
+            Debug.Log("PersistentIdManager tracking data cleared.");
+        }
+
         [InitializeOnLoadMethod]
         public static void Initialize()
         {

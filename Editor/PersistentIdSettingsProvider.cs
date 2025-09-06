@@ -63,7 +63,9 @@ namespace Proselyte.PersistentIdSystem
                             // Apply the change and reinitialize
                             m_SerializedObject.ApplyModifiedProperties();
 
-                            // Reinitialize the manager with new registry
+
+                            // Reinitialize the manager with new registry and cleared tracking data
+                            PersistentIdManager.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
 
                             Debug.Log($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");
