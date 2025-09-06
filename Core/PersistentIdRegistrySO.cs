@@ -1,4 +1,7 @@
+#if UNITY_EDITOR
 using System.Collections.Generic;
+using System.Linq;
+using UnityEditor;
 using UnityEngine;
 
 namespace Proselyte.PersistentIdSystem
@@ -10,81 +13,227 @@ namespace Proselyte.PersistentIdSystem
     [CreateAssetMenu(fileName = "PersistentIdRegistry", menuName = "System/PersistentId Registry")]
     public class PersistentIdRegistrySO : ScriptableObject
     {
-        [SerializeField]
-        private List<uint> registeredIds = new List<uint>();
+        // NOTE(Jazz): Unity cannot serialize a Dictionary directly so use this 
+        // wrapper class to let unity serialize the data with the scriptable 
+        // object.
 
-        private HashSet<uint> idHashSet; // NOTE(Jazz): May need to change to a better structure for storing values.
+        [System.Serializable]
+        internal class SceneIdData
+        {
+            public string sceneGuid;
+            public List<uint> registeredIds = new();
+        }
+
+        [UnityEngine.SerializeField]
+        private List<SceneIdData> sceneDataList = new();
+
+        private Dictionary<string, HashSet<uint>> sceneIdRegistry;
+
+        private string previousGameObjectPath = string.Empty;
+        private string previousGameObjectSceneGuid = string.Empty;
 
         private void OnEnable()
         {
-            InitializeHashSet();
+            InitializeRegistry();
         }
 
-        private void InitializeHashSet()
+        private void InitializeRegistry()
         {
-            if(idHashSet == null)
+            if(sceneIdRegistry == null)
             {
-                idHashSet = new HashSet<uint>(registeredIds);
+                sceneIdRegistry = new Dictionary<string, HashSet<uint>>();
+
+                // Rebuild dictionary from serialized data
+                foreach(var sceneData in sceneDataList)
+                {
+                    if(!string.IsNullOrEmpty(sceneData.sceneGuid))
+                        sceneIdRegistry[sceneData.sceneGuid] = new HashSet<uint>(sceneData.registeredIds);
+                }
             }
-            else if(idHashSet.Count >= int.MaxValue)
+        }
+
+        private void UpdateSerializedData()
+        {
+            sceneDataList.Clear();
+            foreach(var kvp in sceneIdRegistry)
             {
-                Debug.LogError($"Persistent ID Registry has reached the practical upper limit of {int.MaxValue} entries due to HashSet limitations." +
-                    $"Do you really need this many ID values? " +
-                    $"You may need to shard the idHashSet or consider alternative storage strategies.");
+                var sceneData = new SceneIdData()
+                {
+                    sceneGuid = kvp.Key,
+                    registeredIds = new List<uint>(kvp.Value)
+                };
+                sceneDataList.Add(sceneData);
             }
+            UnityEditor.EditorUtility.SetDirty(this);
         }
 
-        public bool IsIdRegistered(uint id)
+        // TODO(Jazz): call from [InitializeOnLoadMethod] EditorApplication.delayCall in PersistentIdManager class.
+        static void CleanupMissingScenes(PersistentIdRegistrySO registryGuids)
         {
-            InitializeHashSet();
-            return idHashSet.Contains(id);
+
         }
 
-        public bool RegisterId(uint id)
+        internal bool IsIdRegisteredInScene(string sceneGuid, uint id)
         {
-            InitializeHashSet();
+            InitializeRegistry();
+            return sceneIdRegistry.ContainsKey(sceneGuid) && sceneIdRegistry[sceneGuid].Contains(id);
+        }
 
-            if(id == 0 || idHashSet.Contains(id))
+        internal bool IsIdRegisteredGlobally(uint id)
+        {
+            InitializeRegistry();
+            bool globalContainsId = sceneIdRegistry.Values.Any(hashSet => hashSet.Contains(id));
+            return globalContainsId;
+        }
+
+        public string GetSceneGuid(GameObject gameObject)
+        {
+            string curr_path = gameObject.scene.path;
+            if(curr_path != null && !string.IsNullOrEmpty(curr_path))
+            {
+                if(curr_path == previousGameObjectPath)
+                    return previousGameObjectSceneGuid;
+
+                var curr_scene_guid = AssetDatabase.AssetPathToGUID(gameObject.scene.path);
+                previousGameObjectSceneGuid = curr_scene_guid;
+                previousGameObjectPath = curr_path;
+
+                return curr_scene_guid;
+            }
+
+            return string.Empty;
+        }
+
+        public bool RegisterId(string sceneGuid, uint id)
+        {
+            InitializeRegistry();
+
+            if(id == 0 || string.IsNullOrEmpty(sceneGuid))
                 return false;
 
-            registeredIds.Add(id);
-            idHashSet.Add(id);
+            if(IsIdRegisteredGlobally(id))
+                return false;
 
-#if UNITY_EDITOR
-            UnityEditor.EditorUtility.SetDirty(this);
-#endif
+            if(!sceneIdRegistry.ContainsKey(sceneGuid))
+            {
+                sceneIdRegistry[sceneGuid] = new HashSet<uint>();
+            }
 
+            sceneIdRegistry[sceneGuid].Add(id);
+            UpdateSerializedData();
             return true;
+        }
+
+        /// <summary>
+        /// Registers an ID for a specific GameObject's scene
+        /// </summary>
+        public bool RegisterId(GameObject gameObject, uint id)
+        {
+            if(gameObject == null) return false;
+
+            string sceneGuid = GetSceneGuid(gameObject);
+            if(string.IsNullOrEmpty(sceneGuid)) 
+                return false;
+            
+            return RegisterId(sceneGuid, id);
         }
 
         public bool UnregisterId(uint id)
         {
-            InitializeHashSet();
+            InitializeRegistry();
 
-            if(idHashSet.Remove(id))
+            bool removed = false;
+            var scenesToRemove = new List<string>();
+
+            // Search all scenes for this ID
+            foreach(var kvp in sceneIdRegistry)
             {
-                registeredIds.Remove(id);
+                if(kvp.Value.Remove(id))
+                {
+                    removed = true;
 
-#if UNITY_EDITOR
-                UnityEditor.EditorUtility.SetDirty(this);
-#endif
+                    // Mark empty scenes for removal
+                    if(kvp.Value.Count == 0)
+                    {
+                        scenesToRemove.Add(kvp.Key);
+                    }
+                }
+            }
 
+            // Remove empty scenes
+            foreach(var sceneGuid in scenesToRemove)
+            {
+                sceneIdRegistry.Remove(sceneGuid);
+            }
+
+            if(removed)
+            {
+                UpdateSerializedData();
+            }
+
+            return removed;
+        }
+
+        public bool RemoveScene(string sceneGuid)
+        {
+            InitializeRegistry();
+
+            if(sceneIdRegistry.Remove(sceneGuid))
+            {
+                UpdateSerializedData();
                 return true;
             }
 
             return false;
         }
 
-        public int RegisteredCount => registeredIds.Count;
+        public int RegisteredCount
+        {
+            get
+            {
+                InitializeRegistry();
+                return sceneIdRegistry.Values.Sum(hashSet => hashSet.Count);
+            }
+        }
 
-        public IReadOnlyList<uint> RegisteredIds => registeredIds;
+        public IEnumerable<uint> RegisteredIds
+        {
+            get
+            {
+                InitializeRegistry();
+                return sceneIdRegistry.Values.SelectMany(hashSet => hashSet);
+            }
+        }
+
+        public int RegisteredSceneCount
+        {
+            get
+            {
+                InitializeRegistry();
+                return sceneIdRegistry.Count;
+            }
+        }
+
+        private IReadOnlyCollection<uint> GetSceneIds(string sceneGuid)
+        {
+            InitializeRegistry();
+            return sceneIdRegistry.ContainsKey(sceneGuid)
+                ? sceneIdRegistry[sceneGuid]
+                : new HashSet<uint>();
+        }
+
+        private IReadOnlyCollection<string> GetRegisteredScenes()
+        {
+            InitializeRegistry();
+            return sceneIdRegistry.Keys;
+        }
 
         /// <summary>
         /// Generates a new unique ID that is not already registered
         /// </summary>
         public uint GenerateUniqueId()
         {
-            InitializeHashSet();
+            InitializeRegistry();
 
             uint newId;
             do
@@ -93,7 +242,7 @@ namespace Proselyte.PersistentIdSystem
                 int low = Random.Range(0, 1 << 16);
                 newId = ((uint)high << 16) | (uint)low;
             }
-            while(idHashSet.Contains(newId) || newId == 0);
+            while(IsIdRegisteredGlobally(newId) || newId == 0);
 
             return newId;
         }
@@ -104,7 +253,7 @@ namespace Proselyte.PersistentIdSystem
         [ContextMenu("Generate Random Hex", false, 0)]
         public void GenerateHexCode()
         {
-            InitializeHashSet();
+            InitializeRegistry();
 
             uint newId;
             do
@@ -113,36 +262,50 @@ namespace Proselyte.PersistentIdSystem
                 int low = Random.Range(1, int.MaxValue);
                 newId = ((uint)high << 28) | (uint)low;
             }
-            while(idHashSet.Contains(newId) || newId == 0);
+            while(IsIdRegisteredGlobally(newId) || newId == 0);
             Debug.Log($"newId: {newId} Hex: 0x{newId:X8}");
         }
 
         // TODO(Jazz): Remove debugging functions here
-        [ContextMenu("Print Ids", false, 0)]
+        [ContextMenu("Print All Ids", false, 1)]
         public void PrintAllIds()
         {
-            if(registeredIds.Count < 1)
+            InitializeRegistry();
+
+            int registeredCount = RegisteredCount;
+            if(registeredCount < 1)
             {
-                Debug.Log("No Ids Registered.");
+                Debug.Log("No IDs registered.");
                 return;
             }
 
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.AppendLine("===== All Registered Ids =====");
-            foreach(uint id in RegisteredIds)
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"===== All Registered IDs ({registeredCount} total across {RegisteredSceneCount} scenes) =====");
+
+            foreach(var sceneGuid in sceneIdRegistry.Keys.OrderBy(guid => guid))
             {
-                sb.AppendLine($"Dec: {id}\tHex: 0x{id:X8}");
+                var ids = sceneIdRegistry[sceneGuid];
+                sb.AppendLine($"\n--- Scene: {sceneGuid} ({ids.Count} IDs) ---");
+
+                foreach(var id in ids.OrderBy(i => i))
+                {
+                    sb.AppendLine($"  Dec: {id}\tHex: 0x{id:X8}");
+                }
             }
+
             Debug.Log(sb.ToString());
         }
 
-        [ContextMenu("Remove All Ids", false, 0)]
+        [ContextMenu("Remove All Ids", false, 2)]
         public void RemoveAllIds()
         {
-            for(int i = RegisteredIds.Count - 1; i >= 0; i--)
-            {
-                UnregisterId(RegisteredIds[i]);
-            }
+            InitializeRegistry();
+
+            var totalRemoved = RegisteredCount;
+            sceneIdRegistry.Clear();
+            UpdateSerializedData();
+
+            Debug.Log($"Registry cleanup: Removed all {totalRemoved} IDs from {sceneDataList.Count} scenes");
         }
 
         /// <summary>
@@ -150,25 +313,44 @@ namespace Proselyte.PersistentIdSystem
         /// </summary>
         public void ValidateRegistry()
         {
-            InitializeHashSet();
+            InitializeRegistry();
 
-            // Remove duplicates and zeros
-            var uniqueIds = new HashSet<uint>();
-            for(int i = registeredIds.Count - 1; i >= 0; i--)
+            // Get all scene GUIDs from the project
+            var allSceneGuids = AssetDatabase.FindAssets("t:Scene").ToHashSet();
+
+            // Find registry entries for scenes that no longer exist
+            var scenesToRemove = sceneIdRegistry.Keys
+                .Where(sceneGuid => !allSceneGuids.Contains(sceneGuid))
+                .ToList();
+
+            // Clean up missing scenes
+            foreach(var missingSceneGuid in scenesToRemove)
             {
-                var id = registeredIds[i];
-                if(id == 0 || !uniqueIds.Add(id))
+                var removedCount = sceneIdRegistry[missingSceneGuid].Count;
+                RemoveScene(missingSceneGuid);
+                Debug.Log($"Registry cleanup: Removed {removedCount} persistent IDs from missing scene: {missingSceneGuid}");
+            }
+
+            if(scenesToRemove.Count > 0)
+            {
+                Debug.Log($"Registry cleanup: Removed {scenesToRemove.Count} missing scenes");
+            }
+
+            // Remove duplicate IDs within scenes and invalid IDs
+            foreach(var sceneGuid in sceneIdRegistry.Keys.ToList())
+            {
+                var idSet = sceneIdRegistry[sceneGuid];
+                var validIds = idSet.Where(id => id != 0).ToHashSet();
+
+                if(validIds.Count != idSet.Count)
                 {
-                    registeredIds.RemoveAt(i);
+                    sceneIdRegistry[sceneGuid] = validIds;
+                    Debug.Log($"Registry cleanup: Removed invalid IDs from scene {sceneGuid}");
                 }
             }
 
-            // Rebuild hash set
-            idHashSet = new HashSet<uint>(registeredIds);
-
-#if UNITY_EDITOR
-            UnityEditor.EditorUtility.SetDirty(this);
-#endif
+            UpdateSerializedData();
         }
     }
 }
+#endif

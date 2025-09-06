@@ -11,9 +11,7 @@ namespace Proselyte.PersistentIdSystem
 {
     public static class PersistentIdManager
     {
-        private static PersistentIdRegistrySO registry;
-        private const string REGISTRY_SEARCH_FILTER = "t:" + nameof(PersistentIdRegistrySO);
-        private const string REGISTRY_PATH = "Assets/PersistentIdRegistry.asset";
+        private static PersistentIdRegistrySO registry => PersistentIdProjectSettings.instance.registry;
 
         // NOTE(Jazz): Tracks components by instanceId that contain PersistentIds, keeps a hashset of all unique PersistentId values.
         // Requires clearing on scene open/close in editor.
@@ -53,10 +51,15 @@ namespace Proselyte.PersistentIdSystem
         }
 
         [InitializeOnLoadMethod]
-        private static void Initialize()
+        public static void Initialize()
         {
+            if(registry == null)
+            {
+                Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set in project settings. Skipping initialization.");
+                return;
+            }
+
             Debug.Log($"[{nameof(PersistentIdManager)}] Initializing()");
-            InitializeRegistry();
 
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
@@ -69,6 +72,12 @@ namespace Proselyte.PersistentIdSystem
 
         private static void OnDelayCallInit()
         {
+            if(registry == null)
+            {
+                Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set. Skipping delay call initialization.");
+                return;
+            }
+
             Debug.Log("Editor Application Delay Call");
             SubscribeToCallbacks();
 
@@ -79,7 +88,8 @@ namespace Proselyte.PersistentIdSystem
                 TRACKED_COMPONENT_IDS_JSON_PATH);
 
             string sessionStateKey = "sessionActive";
-            bool newSession = SessionState.GetBool(sessionStateKey, false);
+            bool sessionWasActive = SessionState.GetBool(sessionStateKey, false);
+            bool newSession = !sessionWasActive;
             if(newSession)
             {
                 Debug.Log("New Session Detected. Setting up first time session variables.");
@@ -112,8 +122,11 @@ namespace Proselyte.PersistentIdSystem
             }
             ReadTrackedIdDataFromJSON();
 
-            if(trackedComponentIds == null || trackedComponentIds.trackedComponentIds == null)
-                Debug.LogError("Missing Tracked Component Ids!!");
+            if(trackedComponentIds?.trackedComponentIds == null || trackedComponentIds.trackedComponentIds.Count == 0)
+            {
+                Debug.Log("No tracked components found after loading from JSON.");
+                return;
+            }
 
             // NOTE(Jazz): Cannot lay trust in previously processed components being updated correctly,
             // since the user could make a change to a script, such as adding another PersistentId field.
@@ -127,8 +140,8 @@ namespace Proselyte.PersistentIdSystem
 
             // Keep track of found ids, then after processing each component
             // compare these to the tracked component ids to discover removed properties.
-            HashSet<uint> foundIds = new(); 
-            HashSet<uint> addedIds = new(); 
+            HashSet<uint> foundIds = new();
+            HashSet<uint> addedIds = new();
 
             // Loop through all tracked objects to reprocess all persistent id values
             foreach(var tracked_comp_kvp in trackedComponentIds.trackedComponentIds)
@@ -139,6 +152,10 @@ namespace Proselyte.PersistentIdSystem
                 var so = new SerializedObject(target_component);
                 var iterator = so.GetIterator();
 
+                // Clear addedIds for this component
+                addedIds.Clear();
+                HashSet<uint> currentComponentIds = new(); // Track current component's IDs
+
                 while(iterator.NextVisible(true))
                 {
                     if(!(iterator.propertyType == SerializedPropertyType.Generic &&
@@ -148,7 +165,14 @@ namespace Proselyte.PersistentIdSystem
                     if(idProp == null) continue;
 
                     var target_id = idProp.uintValue;
-                    
+
+                    // Add current ID to found set (this was missing!)
+                    if(target_id != 0)
+                    {
+                        foundIds.Add(target_id);
+                        currentComponentIds.Add(target_id);
+                    }
+
                     // Check for New additional persistent id properties
                     if(!tracked_comp_kvp.Value.Contains(target_id))
                     {
@@ -159,7 +183,15 @@ namespace Proselyte.PersistentIdSystem
                         {
                             if(IsIdRegistered(target_id))
                             {
-                                // Possible duplicate. Already registered, is this the legitimate owner?
+                                // Possible duplicate. Generate new unique ID
+                                var uniquePersistentId = GenerateUniqueId();
+                                idProp.uintValue = uniquePersistentId;
+                                so.ApplyModifiedProperties();
+                                addedIds.Add(uniquePersistentId);
+                                currentComponentIds.Remove(target_id); // Remove old
+                                currentComponentIds.Add(uniquePersistentId); // Add new
+                                foundIds.Remove(target_id); // Remove old from found
+                                foundIds.Add(uniquePersistentId); // Add new to found
                             }
                             else
                             {
@@ -168,10 +200,14 @@ namespace Proselyte.PersistentIdSystem
                                 idProp.uintValue = uniquePersistentId;
                                 so.ApplyModifiedProperties();
                                 addedIds.Add(uniquePersistentId);
+                                currentComponentIds.Remove(target_id); // Remove old
+                                currentComponentIds.Add(uniquePersistentId); // Add new
+                                foundIds.Remove(target_id); // Remove old from found
+                                foundIds.Add(uniquePersistentId); // Add new to found
                             }
                         }
                         // or new default value
-                        else if (target_id == 0)
+                        else if(target_id == 0)
                         {
                             // This is a candidate where the id has not been generated yet,
                             // lets generate a unique id for it and add it to the tracker
@@ -179,16 +215,26 @@ namespace Proselyte.PersistentIdSystem
                             idProp.uintValue = uniquePersistentId;
                             so.ApplyModifiedProperties();
                             addedIds.Add(uniquePersistentId);
+                            currentComponentIds.Add(uniquePersistentId);
+                            foundIds.Add(uniquePersistentId);
                         }
                     }
                     else
                     {
+                        // ID is tracked, but check if it was reset to 0
                         if(target_id == 0)
                         {
                             var uniquePersistentId = GenerateUniqueId();
                             idProp.uintValue = uniquePersistentId;
                             so.ApplyModifiedProperties();
                             addedIds.Add(uniquePersistentId);
+                            currentComponentIds.Add(uniquePersistentId);
+                            foundIds.Add(uniquePersistentId);
+                        }
+                        // If target_id > 0 and is tracked, ensure it's registered
+                        else if(!IsIdRegistered(target_id))
+                        {
+                            RegisterId(target_component.gameObject, target_id);
                         }
                     }
                 }
@@ -197,7 +243,7 @@ namespace Proselyte.PersistentIdSystem
                 List<uint> idsToRemove = new List<uint>();
                 foreach(var trackedPersistentId in tracked_comp_kvp.Value)
                 {
-                    if(!foundIds.Contains(trackedPersistentId))
+                    if(!currentComponentIds.Contains(trackedPersistentId)) // Use currentComponentIds instead of foundIds
                     {
                         // Detected mismatch between tracked id and found id. Possibly a removed property.
                         idsToRemove.Add(trackedPersistentId);
@@ -221,6 +267,7 @@ namespace Proselyte.PersistentIdSystem
                     trackedComponentIds.trackedComponentIds[tracked_comp_kvp.Key].Add(idToAdd);
                 }
             }
+
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids After Delayed Editor Call ----");
             foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
@@ -233,6 +280,8 @@ namespace Proselyte.PersistentIdSystem
                 sb.Append("\n");
             }
             Debug.Log(sb.ToString());
+
+            registry.ValidateRegistry();
         }
 
         private static void ReadTrackedIdDataFromJSON()
@@ -292,41 +341,6 @@ namespace Proselyte.PersistentIdSystem
                 {
                     Debug.LogError($"Failed to write to {fullPath}: {ex.Message}");
                 }
-            }
-        }
-
-        private static void InitializeRegistry()
-        {
-            if(registry != null) return;
-
-            var guids = AssetDatabase.FindAssets(REGISTRY_SEARCH_FILTER);
-            if(guids.Length > 0)
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guids[0]);
-                registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(path);
-
-                if(guids.Length > 1)
-                {
-                    Debug.LogWarning($"Multiple {nameof(PersistentIdRegistrySO)} assets found. Using: {path}");
-                }
-            }
-
-            if(registry == null)
-            {
-                Debug.LogError($"{nameof(PersistentIdRegistrySO)} not found in project. " +
-                    $"Creating new {nameof(PersistentIdRegistrySO)} at: " + REGISTRY_PATH);
-
-                registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
-
-                var directory = System.IO.Path.GetDirectoryName(REGISTRY_PATH);
-                if(!AssetDatabase.IsValidFolder(directory))
-                {
-                    AssetDatabase.CreateFolder("Assets", System.IO.Path.GetFileName(directory));
-                }
-
-                AssetDatabase.CreateAsset(registry, REGISTRY_PATH);
-                AssetDatabase.SaveAssets();
-                AssetDatabase.Refresh();
             }
         }
 
@@ -438,16 +452,20 @@ namespace Proselyte.PersistentIdSystem
 
         public static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            Debug.Log("Editor Scene Opened.");              // NOTE(Jazz): Big heavy scan,
-            foreach(var root in scene.GetRootGameObjects()) // but only on scene opened in editor.
+            Debug.Log("Editor Scene Opened."); // NOTE(Jazz): Heavy scan, but only when scene opened in editor.
+
+            foreach(var root in scene.GetRootGameObjects())
             {
                 var components = root.GetComponentsInChildren<MonoBehaviour>(true);
                 foreach(var comp in components)
                 {
                     if(comp == null) continue;
 
-                    var componentInstanceId = comp.GetInstanceID();
+                    int componentInstanceId = comp.GetInstanceID();
+
+                    // Ensure the component is tracked in this cycle
                     TrackComponentIds(comp);
+                    processedComponentsThisDomainCycle.Add(componentInstanceId);
 
                     // Register existing IDs
                     var so = new SerializedObject(comp);
@@ -455,22 +473,51 @@ namespace Proselyte.PersistentIdSystem
 
                     while(iterator.NextVisible(true))
                     {
-                        if(!(iterator.propertyType == SerializedPropertyType.Generic && 
-                                iterator.type == nameof(PersistentId))) continue; // NAND
-                            
-                        var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
-                        if(!(idProp != null && idProp.uintValue != 0)) continue; // NAND
-                            
-                        if(!IsIdRegistered(idProp.uintValue))
-                            RegisterId(idProp.uintValue);
-                    }
+                        if(!(iterator.propertyType == SerializedPropertyType.Generic &&
+                              iterator.type == nameof(PersistentId))) continue;
 
-                    processedComponentsThisDomainCycle.Add(componentInstanceId);
+                        var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                        if(!(idProp != null && idProp.uintValue != 0)) continue;
+
+                        uint currentId = idProp.uintValue;
+                        string sceneGuid = registry.GetSceneGuid(comp.gameObject);
+
+                        // Check if ID is already registered in another scene
+                        if(registry.IsIdRegisteredGlobally(currentId))
+                        {
+                            bool alreadyInThisScene = registry.IsIdRegisteredInScene(sceneGuid, currentId);
+
+                            if(!alreadyInThisScene)
+                            {
+                                // Conflict! ID belongs to a different scene.
+                                uint newId = registry.GenerateUniqueId();
+
+                                // Assign new unique value
+                                idProp.uintValue = newId;
+                                so.ApplyModifiedProperties();
+
+                                // Register the new ID
+                                registry.RegisterId(sceneGuid, newId);
+
+                                Debug.LogWarning(
+                                    $"[{nameof(PersistentIdManager)}] Duplicate PersistentId {currentId} detected on " +
+                                    $"{comp.gameObject.name} in scene '{scene.name}'. " +
+                                    $"Generated new ID {newId} (Hex: 0x{newId:X8}).");
+                            }
+                        }
+                        else
+                        {
+                            // Safe to register normally
+                            registry.RegisterId(sceneGuid, currentId);
+                        }
+                    }
                 }
             }
-            
+
             Debug.Log($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
         }
+
+
 
         public static void OnSceneClosing(Scene scene, bool removingScene)
         {
@@ -533,7 +580,7 @@ namespace Proselyte.PersistentIdSystem
                             modifications[i].keepPrefabOverride = true;
 
                             if(!IsIdRegistered(idProp.uintValue))
-                                RegisterId(idProp.uintValue);
+                                RegisterId(component.gameObject, idProp.uintValue);
 
                             Debug.Log($"Restored reverted {nameof(PersistentId)} " +
                                 $"from previousValue: 0x{previousId:X8} on '{component.name}'");
@@ -545,9 +592,9 @@ namespace Proselyte.PersistentIdSystem
             return modifications;
         }
 
-        public static bool RegisterId(uint id)
+        public static bool RegisterId(GameObject _gameObject, uint id)
         {
-            return registry != null && registry.RegisterId(id);
+            return registry != null && registry.RegisterId(_gameObject, id);
         }
 
         public static bool UnregisterId(uint id)
@@ -557,7 +604,7 @@ namespace Proselyte.PersistentIdSystem
 
         public static bool IsIdRegistered(uint id)
         {
-            return registry != null && registry.IsIdRegistered(id);
+            return registry != null && registry.IsIdRegisteredGlobally(id);
         }
 
         public static uint GenerateUniqueId()
@@ -572,6 +619,12 @@ namespace Proselyte.PersistentIdSystem
 
         private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
         {
+            if(registry == null)
+            {
+                Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set. Skipping object change processing.");
+                return;
+            }
+
             for(int eventIndex = 0; eventIndex < stream.length; eventIndex++)
             {
                 var eventType = stream.GetEventType(eventIndex);
@@ -728,7 +781,7 @@ namespace Proselyte.PersistentIdSystem
 
                                                 if(!IsIdRegistered(restoredId))
                                                 {
-                                                    RegisterId(restoredId);
+                                                    RegisterId(comp.gameObject, restoredId);
                                                 }
                                             }
                                         }
@@ -992,7 +1045,7 @@ namespace Proselyte.PersistentIdSystem
 
                                                     if(!IsIdRegistered(preservedId))
                                                     {
-                                                        RegisterId(preservedId);
+                                                        RegisterId(comp.gameObject, preservedId);
                                                     }
                                                 }
                                             }
@@ -1252,7 +1305,7 @@ namespace Proselyte.PersistentIdSystem
 
                 foreach(var id in idsToRegister)
                 {
-                    RegisterId(id);
+                    RegisterId(component.gameObject, id);
                 }
 
                 // Update tracking after processing
@@ -1338,7 +1391,7 @@ namespace Proselyte.PersistentIdSystem
                     {
                         if(!IsIdRegistered(currentId))
                         {
-                            RegisterId(currentId);
+                            RegisterId(comp.gameObject, currentId);
                             Debug.Log($"Re-registered {nameof(PersistentId)} after undo: 0x{currentId:X8} for {obj.name}");
                         }
                     }
@@ -1390,18 +1443,16 @@ namespace Proselyte.PersistentIdSystem
                 {
                     idProp.uintValue = newId;
                     persistentIdProperty.serializedObject.ApplyModifiedProperties();
-
                     if(target is MonoBehaviour comp)
                     {
                         UpdateComponentTracking(comp.GetInstanceID(), oldId, newId);
+                        RegisterId(comp.gameObject,newId);
+                        Debug.Log($"Regenerated {nameof(PersistentId)}: 0x{newId:X8} for {target.name}");
                     }
-
-                    RegisterId(newId);
-                    Debug.Log($"Regenerated {nameof(PersistentId)}: 0x{newId:X8} for {target.name}");
                 }
             }
 
-            registry?.ValidateRegistry();
+            registry.ValidateRegistry();
         }
 
         private static void UpdateComponentTracking(int componentInstanceId, uint oldId, uint newId)
@@ -1421,5 +1472,5 @@ namespace Proselyte.PersistentIdSystem
             }
         }
     }
-#endif
 }
+#endif

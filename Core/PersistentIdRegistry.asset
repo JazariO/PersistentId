@@ -12,4 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 74b295f382a28a64e95060d590c0c876, type: 3}
   m_Name: PersistentIdRegistry
   m_EditorClassIdentifier: 
-  registeredIds: 536ca74aa0dfd2430867a4fc86b2ea05
+  sceneDataList:
+  - sceneGuid: 1d4946e9ae4b75a48ac29ab4d7718241
+    registeredIds: 557fb436
