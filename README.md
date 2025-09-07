@@ -35,7 +35,7 @@ public class MyComponent : MonoBehaviour
 ```
 ![e1bc4d9fd0b8e9769e44d36bc8d04962.png](./Docs/Images/e1bc4d9fd0b8e9769e44d36bc8d04962.png)  
 Seriously, that’s it.
-Then use it like:
+Then access the identifier as a uint value:
 ```csharp
 public class MyComponent : MonoBehaviour
 {
