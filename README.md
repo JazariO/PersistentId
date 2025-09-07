@@ -33,8 +33,20 @@ public class MyComponent : MonoBehaviour
     public PersistentId id;
 }
 ```
-![e1bc4d9fd0b8e9769e44d36bc8d04962.png](./Docs/Images/e1bc4d9fd0b8e9769e44d36bc8d04962.png)
+![e1bc4d9fd0b8e9769e44d36bc8d04962.png](./Docs/Images/e1bc4d9fd0b8e9769e44d36bc8d04962.png)  
 Seriously, that’s it.
+Then use it like:
+```csharp
+public class MyComponent : MonoBehaviour
+{
+    public PersistentId myId;
+
+	void Start()
+	{
+		Debug.Log(myId.Id);
+	}
+}
+```
 
 ## Why Persistent ID?
 If you've tried to work with unique ids in Unity before you've probably run into the issue where `UnityEngine.Object.instanceId` _**won't persist**_ across editor sessions or builds, making it unreliable for long-term object identification.
