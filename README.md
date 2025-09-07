@@ -47,6 +47,7 @@ public class MyComponent : MonoBehaviour
 	}
 }
 ```
+![c3bd2b92fb2dfb5e49719a2b4f65e222.png](./Docs/Images/c3bd2b92fb2dfb5e49719a2b4f65e222.png)
 
 ## Why Persistent ID?
 If you've tried to work with unique ids in Unity before you've probably run into the issue where `UnityEngine.Object.instanceId` _**won't persist**_ across editor sessions or builds, making it unreliable for long-term object identification.

@@ -9,6 +9,7 @@ using System.IO;
 
 namespace Proselyte.PersistentIdSystem
 {
+    [ExecuteInEditMode]
     public static class PersistentIdManager
     {
         private static PersistentIdRegistrySO registry => PersistentIdProjectSettings.instance.registry;
@@ -90,6 +91,17 @@ namespace Proselyte.PersistentIdSystem
         [InitializeOnLoadMethod]
         public static void Initialize()
         {
+            Debug.Log("[PersistentIdManager] Initialize()");
+            if(Application.isPlaying)
+            {
+                Debug.Log("Editor is in Playmode!");
+                UnsubscribeToCallbacks();
+                return;
+            } else
+            {
+                Debug.Log("Editor is not playing!");
+            }
+
             PersistentIdProjectSettings.RehydrateRegistryReference();
             InitializeOnFirstInstall();
 
@@ -109,6 +121,9 @@ namespace Proselyte.PersistentIdSystem
 
             Debug.Log($"[{nameof(PersistentIdManager)}] Initializing()");
 
+            EditorApplication.playModeStateChanged -= OnPlaymodeChanged;
+            EditorApplication.playModeStateChanged += OnPlaymodeChanged;
+
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
             AssemblyReloadEvents.afterAssemblyReload -= OnAfterAssemblyReload;
@@ -116,6 +131,42 @@ namespace Proselyte.PersistentIdSystem
 
             EditorApplication.delayCall -= OnDelayCallInit;
             EditorApplication.delayCall += OnDelayCallInit;
+        }
+
+        private static void OnPlaymodeChanged(PlayModeStateChange state)
+        {
+            switch(state)
+            {
+                case PlayModeStateChange.ExitingEditMode:
+                    Debug.Log("Exiting Edit Mode - Unsubscribing callbacks");
+                    UnsubscribeToCallbacks();
+                    // Also remove any pending delay calls to prevent unnecessary work in playmode
+                    EditorApplication.delayCall -= OnDelayCallInit;
+                    break;
+
+                case PlayModeStateChange.EnteredEditMode:
+                    Debug.Log("Entered Edit Mode - Resubscribing callbacks");
+                    if(registry != null)
+                    {
+                        SubscribeToCallbacks();
+                        // Re-add delay call for edit mode initialization if needed
+                        EditorApplication.delayCall -= OnDelayCallInit;
+                        EditorApplication.delayCall += OnDelayCallInit;
+                    }
+                    break;
+
+                case PlayModeStateChange.ExitingPlayMode:
+                    Debug.Log("Exiting Play Mode");
+                    // Callbacks should already be unsubscribed, but ensure they are
+                    UnsubscribeToCallbacks();
+                    break;
+
+                case PlayModeStateChange.EnteredPlayMode:
+                    Debug.Log("Entered Play Mode - Callbacks should be unsubscribed");
+                    // Ensure callbacks are definitely unsubscribed in play mode
+                    UnsubscribeToCallbacks();
+                    break;
+            }
         }
 
         private static void InitializeOnFirstInstall()
@@ -199,6 +250,11 @@ namespace Proselyte.PersistentIdSystem
 
         private static void OnDelayCallInit()
         {
+            if(Application.isPlaying)
+            {
+                Debug.Log("DelayCall executed in playmode - skipping initialization");
+                return;
+            }
             if(registry == null)
             {
                 Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set. Skipping delay call initialization.");
@@ -514,6 +570,15 @@ namespace Proselyte.PersistentIdSystem
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorSceneManager.sceneClosing -= OnSceneClosing;
             EditorSceneManager.sceneClosing += OnSceneClosing;
+        }
+
+        private static void UnsubscribeToCallbacks()
+        {
+            ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
+            Undo.undoRedoPerformed -= OnUndoRedoPerformed;
+            Undo.postprocessModifications -= OnPostProcessModifications;
+            EditorSceneManager.sceneOpened -= OnSceneOpened;
+            EditorSceneManager.sceneClosing -= OnSceneClosing;
         }
 
         private static void OnBeforeAssemblyReload()
