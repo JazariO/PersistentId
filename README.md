@@ -33,6 +33,7 @@ public class MyComponent : MonoBehaviour
     public PersistentId id;
 }
 ```
+![e1bc4d9fd0b8e9769e44d36bc8d04962.png](./Docs/Images/e1bc4d9fd0b8e9769e44d36bc8d04962.png)
 Seriously, that’s it.
 
 ## Why Persistent ID?
