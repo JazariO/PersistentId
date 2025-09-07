@@ -1,4 +1,6 @@
 # Persistent Id
+![Unity 6 Compatible](https://img.shields.io/badge/Unity-6.0%2B-green?logo=unity)
+
 Persistent Id is a lightweight editor-generated unique ID system for Unity. 
 Designed to be dropped into existing projects with "declare and forget" usage in the editor that remains rock-solid and dependable across:
 - editor sessions
