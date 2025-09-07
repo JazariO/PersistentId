@@ -5,11 +5,61 @@ using UnityEngine;
 namespace Proselyte.PersistentIdSystem
 {
     // Data Layer - Scriptable Singleton
-    [FilePath("ProjectSettings/Packages/com.proselyte/PersistentIdSettings.asset", FilePathAttribute.Location.ProjectFolder)]
+    [System.Serializable]
+    [FilePath("ProjectSettings/PersistentIdSettings.asset", FilePathAttribute.Location.ProjectFolder)]
     public class PersistentIdProjectSettings : ScriptableSingleton<PersistentIdProjectSettings>
     {
         [SerializeField]
         public PersistentIdRegistrySO registry;
+
+        public static void RehydrateRegistryReference()
+        {
+            var settings = PersistentIdProjectSettings.instance;
+
+            if(settings.registry == null)
+            {
+                // Try to find the registry asset by GUID
+                string registryPath = AssetDatabase.GUIDToAssetPath("8a172499b22b87c448b889145c836286");
+                var registryAsset = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(registryPath);
+
+                if(registryAsset != null)
+                {
+                    settings.registry = registryAsset;
+                    settings.Save(true); // Save the reference back to the asset
+                    Debug.Log("[PersistentIdProjectSettings] Registry reference restored after editor reload.");
+                }
+                else
+                {
+                    Debug.LogWarning("[PersistentIdProjectSettings] Could not find registry asset at expected path.");
+                }
+            }
+        }
+
+
+        public void SaveRegistryRef()
+        {
+            Debug.Log("Saving PersistentIdProjectSettings registry.");
+
+            // Ensure directory exists
+            string directory = System.IO.Path.GetDirectoryName(GetFilePath());
+            if(!System.IO.Directory.Exists(directory))
+            {
+                System.IO.Directory.CreateDirectory(directory);
+            }
+
+            Debug.Log($"Saving to path: {GetFilePath()}");
+            Save(true);
+
+            // Verify the file exists after save
+            if(System.IO.File.Exists(GetFilePath()))
+            {
+                Debug.Log("File saved successfully!");
+            }
+            else
+            {
+                Debug.LogError("File was not saved!");
+            }
+        }
     }
 
     // UI Layer - Settings Provider
@@ -63,7 +113,7 @@ namespace Proselyte.PersistentIdSystem
                             // Apply the change and reinitialize
                             m_SerializedObject.ApplyModifiedProperties();
 
-
+                            PersistentIdProjectSettings.instance.SaveRegistryRef();
                             // Reinitialize the manager with new registry and cleared tracking data
                             PersistentIdManager.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
@@ -80,6 +130,7 @@ namespace Proselyte.PersistentIdSystem
                     {
                         // No confirmation needed - apply directly
                         m_SerializedObject.ApplyModifiedProperties();
+                        PersistentIdProjectSettings.instance.SaveRegistryRef();
                         EditorUtility.RequestScriptReload();
                     }
                 }

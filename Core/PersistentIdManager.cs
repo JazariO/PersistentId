@@ -90,6 +90,7 @@ namespace Proselyte.PersistentIdSystem
         [InitializeOnLoadMethod]
         public static void Initialize()
         {
+            PersistentIdProjectSettings.RehydrateRegistryReference();
             InitializeOnFirstInstall();
             if(registry == null)
             {
@@ -113,6 +114,8 @@ namespace Proselyte.PersistentIdSystem
             // Check the sentinel value in EditorPrefs
             if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
             {
+                EditorPrefs.SetBool(INITIALIZED_KEY, true);
+
                 // Sentinel indicates this is a fresh install
                 Debug.Log("[PersistentIdInitializer] Detected fresh package installation. Setting up PersistentIdRegistrySO.");
 
@@ -214,6 +217,18 @@ namespace Proselyte.PersistentIdSystem
                 for(int sceneIndex = 0; sceneIndex < EditorSceneManager.sceneCount; sceneIndex++)
                 {
                     var scene = EditorSceneManager.GetSceneAt(sceneIndex);
+
+                    // Compare and trim orphaned scene references from registry keys
+                    if(!registry.IsSceneRegistered(scene, out string sceneGuid))
+                    {
+                        if(!string.IsNullOrEmpty(sceneGuid))
+                        {
+                            Debug.Log($"Removing scene {AssetDatabase.GUIDToAssetPath(sceneGuid)} with guid: " +  sceneGuid + " on new editor session load.");
+                            registry.RemoveScene(sceneGuid);
+                        }
+                    }
+
+                    // Process open scenes for ids.
                     OnSceneOpened(scene, OpenSceneMode.Additive);
                 }
 
@@ -520,7 +535,7 @@ namespace Proselyte.PersistentIdSystem
                 sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
                 foreach(var persistentId in trackedComponent.Value)
                 {
-                    sb.Append($"{persistentId.ToString()}, ");
+                    sb.Append($"0x{persistentId:X8}, ");
                 }
                 sb.Append("\n");
             }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -25,7 +26,7 @@ namespace Proselyte.PersistentIdSystem
         }
 
         [UnityEngine.SerializeField]
-        private List<SceneIdData> sceneDataList = new();
+        internal readonly List<SceneIdData> sceneDataList = new();
 
         private Dictionary<string, HashSet<uint>> sceneIdRegistry;
 
@@ -78,6 +79,18 @@ namespace Proselyte.PersistentIdSystem
             InitializeRegistry();
             bool globalContainsId = sceneIdRegistry.Values.Any(hashSet => hashSet.Contains(id));
             return globalContainsId;
+        }
+
+        internal bool IsSceneRegistered(Scene scene, out string sceneGuid)
+        {
+            InitializeRegistry();
+            sceneGuid = string.Empty;
+
+            if(string.IsNullOrEmpty(scene.path))
+                return false;
+
+            sceneGuid = AssetDatabase.AssetPathToGUID(scene.path);
+            return !string.IsNullOrEmpty(sceneGuid) && sceneIdRegistry.ContainsKey(sceneGuid);
         }
 
         public string GetSceneGuid(GameObject gameObject)
