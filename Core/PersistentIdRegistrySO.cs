@@ -26,22 +26,18 @@ namespace Proselyte.PersistentIdSystem
         }
 
         [UnityEngine.SerializeField]
-        internal readonly List<SceneIdData> sceneDataList = new();
+        internal List<SceneIdData> sceneDataList = new();
 
         private Dictionary<string, HashSet<uint>> sceneIdRegistry;
 
         private string previousGameObjectPath = string.Empty;
         private string previousGameObjectSceneGuid = string.Empty;
 
-        private void OnEnable()
-        {
-            InitializeRegistry();
-        }
-
-        private void InitializeRegistry()
+        public void InitializeRegistry()
         {
             if(sceneIdRegistry == null)
             {
+                Debug.Log("RegistrySO not initialized, initializing now.");
                 sceneIdRegistry = new Dictionary<string, HashSet<uint>>();
 
                 // Rebuild dictionary from serialized data
@@ -50,6 +46,8 @@ namespace Proselyte.PersistentIdSystem
                     if(!string.IsNullOrEmpty(sceneData.sceneGuid))
                         sceneIdRegistry[sceneData.sceneGuid] = new HashSet<uint>(sceneData.registeredIds);
                 }
+
+                Debug.Log("Scenes discovered during dictionary rebuild: " + sceneDataList.Count);
             }
         }
 

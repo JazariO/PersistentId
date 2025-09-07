@@ -92,11 +92,20 @@ namespace Proselyte.PersistentIdSystem
         {
             PersistentIdProjectSettings.RehydrateRegistryReference();
             InitializeOnFirstInstall();
+
             if(registry == null)
             {
                 Debug.LogWarning($"[{nameof(PersistentIdManager)}] Registry not set in project settings. Skipping initialization.");
                 return;
             }
+
+            System.Text.StringBuilder sb = new();
+            sb.AppendLine($"---- Initializing Registry Scenes: {registry.RegisteredCount}----");
+            foreach(var scene in registry.sceneDataList)
+            {
+                sb.AppendLine("Scene found: " + AssetDatabase.GUIDToAssetPath(scene.sceneGuid));
+            }
+            Debug.Log(sb.ToString());
 
             Debug.Log($"[{nameof(PersistentIdManager)}] Initializing()");
 
@@ -213,22 +222,55 @@ namespace Proselyte.PersistentIdSystem
                 Debug.Log("New Session Detected. Setting up first time session variables.");
                 SessionState.SetBool(sessionStateKey, true);
 
-                // Initialize tracker with all scenes on first load of the editor
+                // Clean up orphaned scenes from registry (scenes that no longer exist in project)
+                if(registry != null)
+                {
+                    // Init registry
+                    registry.InitializeRegistry();
+
+                    var scenesToRemove = new List<string>();
+
+                    System.Text.StringBuilder sbr = new();
+                    sbr.AppendLine($"---- Checking Registry Scenes for Cleanup: {registry.RegisteredCount} ----");
+                    foreach(var sceneData in registry.sceneDataList)
+                    {
+                        string scenePath = AssetDatabase.GUIDToAssetPath(sceneData.sceneGuid);
+                        sbr.AppendLine($"Checking scene: {scenePath} (GUID: {sceneData.sceneGuid})");
+
+                        if(string.IsNullOrEmpty(scenePath))
+                        {
+                            scenesToRemove.Add(sceneData.sceneGuid);
+                            Debug.Log($"Marking deleted scene with GUID {sceneData.sceneGuid} for removal from registry");
+                        }
+                        else
+                        {
+                            Debug.Log($"Preserving registry data for scene: {scenePath}");
+                        }
+                    }
+                    Debug.Log(sbr.ToString());
+
+                    foreach(string sceneGuid in scenesToRemove)
+                    {
+                        registry.RemoveScene(sceneGuid);
+                        Debug.Log($"Removed orphaned scene with GUID {sceneGuid} from registry");
+                    }
+
+                    if(scenesToRemove.Count > 0)
+                    {
+                        System.Text.StringBuilder sbrs = new();
+                        sbrs.AppendLine($"---- Post Cleanup Registry Scenes: {registry.RegisteredCount} ----");
+                        foreach(var sceneData in registry.sceneDataList)
+                        {
+                            sbrs.AppendLine($"Scene preserved: {AssetDatabase.GUIDToAssetPath(sceneData.sceneGuid)}");
+                        }
+                        Debug.Log(sbrs.ToString());
+                    }
+                }
+
+                // Initialize tracker with all currently open scenes
                 for(int sceneIndex = 0; sceneIndex < EditorSceneManager.sceneCount; sceneIndex++)
                 {
                     var scene = EditorSceneManager.GetSceneAt(sceneIndex);
-
-                    // Compare and trim orphaned scene references from registry keys
-                    if(!registry.IsSceneRegistered(scene, out string sceneGuid))
-                    {
-                        if(!string.IsNullOrEmpty(sceneGuid))
-                        {
-                            Debug.Log($"Removing scene {AssetDatabase.GUIDToAssetPath(sceneGuid)} with guid: " +  sceneGuid + " on new editor session load.");
-                            registry.RemoveScene(sceneGuid);
-                        }
-                    }
-
-                    // Process open scenes for ids.
                     OnSceneOpened(scene, OpenSceneMode.Additive);
                 }
 
@@ -245,11 +287,10 @@ namespace Proselyte.PersistentIdSystem
                 catch(System.Exception ex)
                 {
                     Debug.LogError($"Failed to write to {fullPath}: {ex.Message}");
-
                     // TODO(Jazz): Handle system recovery when file writing fails.
-                    // File/Directory may have been occupied, corrupted, or in an unknown state.
                 }
             }
+
             ReadTrackedIdDataFromJSON();
 
             if(trackedComponentIds?.trackedComponentIds == null || trackedComponentIds.trackedComponentIds.Count == 0)
