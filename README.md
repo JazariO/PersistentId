@@ -1,24 +1,27 @@
 # Persistent Id
 ![Unity 6 Compatible](https://img.shields.io/badge/Unity-6.0%2B-green?logo=unity)
 
-Persistent Id is a lightweight editor-generated unique ID system for Unity. 
+Persistent Id is a lightweight editor-generated unique ID system for Unity.  
 Designed to be dropped into existing projects with "declare and forget" usage in the editor that remains **rock-solid** and **dependable** across:
-- editor sessions
-- domain reloads
-- editor playmode
-- and standalone builds
+- Editor Sessions
+- Domain Reloads
+- Editor Playmode
+- and Standalone Builds
 
 ## Features
-#### Guaranteed Unique
-Each generated id is internally validated to avoid collisions.
-#### Non-Monolithic
-Just declare a `PersistentId` field in your MonoBehaviour. No "SerializableBehaviour" inheritance, Component reference handling, or refactoring integration costs.
-#### Zero Runtime Cost 
-ID tracking and generation is completely done in the editor. Generated IDs are free-standing at runtime with no tracking overhead.
-#### Prefab-Safe IDs
-Prefab assets are ignored while editing. Only the instances in your scenes are tracked.
-#### Editor Performance-Aware
-No polling editor update loops or sluggish full hierarchy scans unless absolutely necessary on editor session start or editor scene change.
+### Guaranteed Unique
+- Each generated id is internally validated to avoid collisions.
+### Non-Monolithic
+- Just declare a `PersistentId` field in your MonoBehaviour.
+- No "SerializableBehaviour" inheritance, Component reference handling, or refactoring integration costs.
+### Zero Runtime Cost 
+- ID tracking and generation is completely done in the editor.
+- Generated IDs are free-standing at runtime with no tracking overhead.
+### Prefab-Safe IDs
+- Prefab asset files on disk are ignored while editing.
+- Only prefab instances in your scenes are tracked.
+### Editor Performance-Aware
+- No polling editor update loops or sluggish full hierarchy scans
 
 ## Usage
 ```csharp
