@@ -62,8 +62,10 @@ PersistentId takes a different approach: it’s lightweight and relies on editor
 Persistent Id is optimized for **static scene-based workflows** where objects exist in the editor and need stable identifiers across sessions and builds. It’s brilliant for save systems or analytics—but if your game leans heavily on runtime instantiation, procedural content, or asset-level tracking, you’ll need to extend or supplement it.
 
 # Tradeoffs
-Feature Benefit                        |                        Tradeoff
-Editor-only Generation            : No runtime generation for dynamic objects.
-Prefab-safe instance tracking  : No prefab asset-level IDs
-Zero runtime overhead            : No runtime flexibility or dynamic assignment
-Fire-and-forget simplicity         : Limited customization
+| Feature Benefit               | Drawback                                                                      |
+|-------------------------------|-------------------------------------------------------------------------------|
+| Editor-only Generation        | No runtime generation for dynamic objects                                     |
+| Prefab-safe instance tracking | No prefab asset-level IDs                                                     |
+| Zero runtime overhead         | No runtime flexibility or dynamic assignment                                  |
+| Fire-and-forget simplicity    | No public API for ID registration or generation, fully handled by the editor  |
+
