@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using static Proselyte.PersistentIdSystem.PersistentIdLogger;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -37,7 +38,7 @@ namespace Proselyte.PersistentIdSystem
         {
             if(sceneIdRegistry == null)
             {
-                Debug.Log("RegistrySO not initialized, initializing now.");
+                LogInfo("RegistrySO not initialized, initializing now.");
                 sceneIdRegistry = new Dictionary<string, HashSet<uint>>();
 
                 // Rebuild dictionary from serialized data
@@ -47,7 +48,7 @@ namespace Proselyte.PersistentIdSystem
                         sceneIdRegistry[sceneData.sceneGuid] = new HashSet<uint>(sceneData.registeredIds);
                 }
 
-                Debug.Log("Scenes discovered during dictionary rebuild: " + sceneDataList.Count);
+                LogInfo("Scenes discovered during dictionary rebuild: " + sceneDataList.Count);
             }
         }
 
@@ -252,25 +253,6 @@ namespace Proselyte.PersistentIdSystem
             return newId;
         }
 
-        /// <summary>
-        /// Generates a random hex value and logs it
-        /// </summary>
-        [ContextMenu("Generate Random Hex", false, 0)]
-        public void GenerateHexCode()
-        {
-            InitializeRegistry();
-
-            uint newId;
-            do
-            {
-                int high = Random.Range(1, int.MaxValue);
-                int low = Random.Range(1, int.MaxValue);
-                newId = ((uint)high << 28) | (uint)low;
-            }
-            while(IsIdRegisteredGlobally(newId) || newId == 0);
-            Debug.Log($"newId: {newId} Hex: 0x{newId:X8}");
-        }
-
         // TODO(Jazz): Remove debugging functions here
         [ContextMenu("Print All Ids", false, 1)]
         public void PrintAllIds()
@@ -280,7 +262,7 @@ namespace Proselyte.PersistentIdSystem
             int registeredCount = RegisteredCount;
             if(registeredCount < 1)
             {
-                Debug.Log("No IDs registered.");
+                LogInfo("No IDs registered.");
                 return;
             }
 
@@ -298,7 +280,7 @@ namespace Proselyte.PersistentIdSystem
                 }
             }
 
-            Debug.Log(sb.ToString());
+            LogDebug(sb.ToString());
         }
 
         [ContextMenu("Remove All Ids", false, 2)]
@@ -310,7 +292,7 @@ namespace Proselyte.PersistentIdSystem
             sceneIdRegistry.Clear();
             UpdateSerializedData();
 
-            Debug.Log($"Registry cleanup: Removed all {totalRemoved} IDs from {sceneDataList.Count} scenes");
+            LogInfo($"Registry cleanup: Removed all {totalRemoved} IDs from {sceneDataList.Count} scenes");
         }
 
         /// <summary>
@@ -333,12 +315,12 @@ namespace Proselyte.PersistentIdSystem
             {
                 var removedCount = sceneIdRegistry[missingSceneGuid].Count;
                 RemoveScene(missingSceneGuid);
-                Debug.Log($"Registry cleanup: Removed {removedCount} persistent IDs from missing scene: {missingSceneGuid}");
+                LogInfo($"Registry cleanup: Removed {removedCount} persistent IDs from missing scene: {missingSceneGuid}");
             }
 
             if(scenesToRemove.Count > 0)
             {
-                Debug.Log($"Registry cleanup: Removed {scenesToRemove.Count} missing scenes");
+                LogInfo($"Registry cleanup: Removed {scenesToRemove.Count} missing scenes");
             }
 
             // Remove duplicate IDs within scenes and invalid IDs
@@ -350,7 +332,7 @@ namespace Proselyte.PersistentIdSystem
                 if(validIds.Count != idSet.Count)
                 {
                     sceneIdRegistry[sceneGuid] = validIds;
-                    Debug.Log($"Registry cleanup: Removed invalid IDs from scene {sceneGuid}");
+                    LogInfo($"Registry cleanup: Removed invalid IDs from scene {sceneGuid}");
                 }
             }
 

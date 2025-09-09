@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
+using static Proselyte.PersistentIdSystem.PersistentIdLogger;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -12,9 +13,18 @@ namespace Proselyte.PersistentIdSystem
         [SerializeField]
         public PersistentIdRegistrySO registry;
 
+        [SerializeField]
+        public PersistentIdLogger.LogSeverity logSeverity = PersistentIdLogger.LogSeverity.Warning;
+
+        public void ApplyLoggingSettings()
+        {
+            PersistentIdLogger.MinimumSeverity = logSeverity;
+        }
+
         public static void RehydrateRegistryReference()
         {
             var settings = PersistentIdProjectSettings.instance;
+            settings.ApplyLoggingSettings();
 
             if(settings.registry == null)
             {
@@ -26,19 +36,18 @@ namespace Proselyte.PersistentIdSystem
                 {
                     settings.registry = registryAsset;
                     settings.Save(true); // Save the reference back to the asset
-                    Debug.Log("[PersistentIdProjectSettings] Registry reference restored after editor reload.");
+                    LogDebug("Registry reference restored after editor reload.");
                 }
                 else
                 {
-                    Debug.LogWarning("[PersistentIdProjectSettings] Could not find registry asset at expected path.");
+                    LogError($"Could not find registry asset at expected path. You may need to set the registry asset from Project Settings > {nameof(PersistentId)}");
                 }
             }
         }
 
-
         public void SaveRegistryRef()
         {
-            Debug.Log("Saving PersistentIdProjectSettings registry.");
+            LogDebug("Saving PersistentIdProjectSettings registry.");
 
             // Ensure directory exists
             string directory = System.IO.Path.GetDirectoryName(GetFilePath());
@@ -47,17 +56,17 @@ namespace Proselyte.PersistentIdSystem
                 System.IO.Directory.CreateDirectory(directory);
             }
 
-            Debug.Log($"Saving to path: {GetFilePath()}");
+            LogDebug($"Saving to path: {GetFilePath()}");
             Save(true);
 
             // Verify the file exists after save
             if(System.IO.File.Exists(GetFilePath()))
             {
-                Debug.Log("File saved successfully!");
+                LogDebug("File saved successfully!");
             }
             else
             {
-                Debug.LogError("File was not saved!");
+                LogError("File was not saved!");
             }
         }
     }
@@ -101,6 +110,17 @@ namespace Proselyte.PersistentIdSystem
                 EditorGUILayout.PropertyField(m_RegistryProperty, new GUIContent("ID Registry",
                     "The Persistent ID Registry asset that will track all IDs in the project"));
 
+                ShowRegistryInfo();
+
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Logging Configuration", EditorStyles.boldLabel);
+                EditorGUILayout.Space();
+
+                var severityProperty = m_SerializedObject.FindProperty(nameof(PersistentIdProjectSettings.logSeverity));
+                EditorGUILayout.PropertyField(severityProperty, new GUIContent("Log Severity",
+                    "Controls the minimum severity level for Persistent ID system logs"));
+
+
                 if(check.changed)
                 {
                     var newRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
@@ -118,7 +138,7 @@ namespace Proselyte.PersistentIdSystem
                             PersistentIdManager.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
 
-                            Debug.Log($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");
+                            LogInfo($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");
                         }
                         else
                         {
@@ -133,27 +153,19 @@ namespace Proselyte.PersistentIdSystem
                         PersistentIdProjectSettings.instance.SaveRegistryRef();
                         EditorUtility.RequestScriptReload();
                     }
+
+                    PersistentIdProjectSettings.instance.ApplyLoggingSettings();
                 }
 
                 EditorGUILayout.Space();
-                ShowRegistryInfo();
             }
         }
 
         private bool ShouldShowConfirmation(PersistentIdRegistrySO oldRegistry, PersistentIdRegistrySO newRegistry)
         {
-            // Show confirmation when:
-            // 1. Changing from one populated registry to another
-            // 2. Removing a registry that has registered IDs
-
-            if(oldRegistry != null && oldRegistry.RegisteredCount > 0)
-                return true;
-
-            if(oldRegistry != newRegistry && newRegistry != null)
-                return true;
-
-            return false;
+            return oldRegistry != newRegistry;
         }
+
 
         private bool ShowRegistryChangeConfirmation(PersistentIdRegistrySO oldRegistry, PersistentIdRegistrySO newRegistry)
         {
@@ -197,25 +209,12 @@ namespace Proselyte.PersistentIdSystem
                     "No registry assigned. The Persistent ID system is disabled.\n" +
                     "Create a PersistentIdRegistry asset and assign it above to enable the system.",
                     MessageType.Warning);
+            } else
+            {
+                EditorGUILayout.HelpBox(
+                    $"Total IDs Registered: {currentRegistry.RegisteredCount}",
+                    MessageType.Info);
             }
-        }
-    }
-
-    // Extension methods for accessing registry info (add these to PersistentIdRegistrySO)
-    public static class RegistryExtensions
-    {
-        public static int GetRegisteredCount(this PersistentIdRegistrySO registry)
-        {
-            if(registry == null) return 0;
-            // Add public property or method to access registered count
-            return 0; // Replace with actual implementation
-        }
-
-        public static int GetRegisteredSceneCount(this PersistentIdRegistrySO registry)
-        {
-            if(registry == null) return 0;
-            // Add public property or method to access scene count
-            return 0; // Replace with actual implementation
         }
     }
 }

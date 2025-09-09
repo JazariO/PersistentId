@@ -3,6 +3,7 @@ using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
+using static Proselyte.PersistentIdSystem.PersistentIdLogger;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -161,13 +162,13 @@ namespace Proselyte.PersistentIdSystem
                         if(GUILayout.Button("Copy Dec", GUILayout.Width(70)))
                         {
                             EditorGUIUtility.systemCopyBuffer = id.ToString();
-                            Debug.Log($"Copied to clipboard: {id}");
+                            LogInfo($"Copied to clipboard: {id}");
                         }
 
                         if(GUILayout.Button("Copy Hex", GUILayout.Width(70)))
                         {
                             EditorGUIUtility.systemCopyBuffer = $"0x{id:X8}";
-                            Debug.Log($"Copied to clipboard: 0x{id:X8}");
+                            LogInfo($"Copied to clipboard: 0x{id:X8}");
                         }
 
                         if(!Application.isPlaying && GUILayout.Button("Remove", GUILayout.Width(60)))

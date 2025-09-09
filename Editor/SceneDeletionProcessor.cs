@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
+using static Proselyte.PersistentIdSystem.PersistentIdLogger;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -17,7 +18,7 @@ namespace Proselyte.PersistentIdSystem
         {
             if(Registry == null)
             {
-                Debug.LogWarning("Missing Persistent Id Registry scriptable object on scene deletion. " +
+                PersistentIdLogger.LogWarning("Missing Persistent Id Registry scriptable object on scene deletion. " +
                     "Scene ids may be out of sync.");
                 return;
             }
@@ -26,7 +27,7 @@ namespace Proselyte.PersistentIdSystem
             {
                 if(asset.EndsWith(".unity"))
                 {
-                    Debug.Log("scene file processed: " + asset);
+                    LogDebug("scene file processed: " + asset);
                 }
             }
 
@@ -39,7 +40,7 @@ namespace Proselyte.PersistentIdSystem
                     if(!string.IsNullOrEmpty(sceneGuid))
                     {
                         Registry.RemoveScene(sceneGuid);
-                        Debug.Log("Removed scene file which was located at : " + deletedAsset);
+                        LogDebug("Removed scene file which was located at : " + deletedAsset);
                     }
                 }
             }

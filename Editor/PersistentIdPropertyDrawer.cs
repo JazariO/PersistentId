@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor;
+using static Proselyte.PersistentIdSystem.PersistentIdLogger;
 
 namespace Proselyte.PersistentIdSystem
 {
@@ -67,7 +68,7 @@ namespace Proselyte.PersistentIdSystem
             {
                 string copyValue = id == 0 ? "0" : id.ToString();
                 EditorGUIUtility.systemCopyBuffer = copyValue;
-                Debug.Log($"Copied PersistentId to clipboard: {copyValue}");
+                LogInfo($"Copied PersistentId to clipboard: {copyValue}");
             }
 
             // Tooltip
