@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     [System.Serializable]
     internal class TrackedComponentIds

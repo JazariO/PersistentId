@@ -3,9 +3,9 @@ using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     /// <summary>
     /// Custom editor for PersistentIdRegistrySO that displays registered IDs

@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     public static class PersistentIdLogger 
     {
@@ -19,7 +19,7 @@ namespace Proselyte.PersistentIdSystem
 
         private static string FormatMessage(string message, LogSeverity severity)
         {
-            return $"[PersistentId][{severity}] {message}";
+            return $"[{nameof(Persistence)}][{severity}] {message}";
         }
 
         public static void LogDebug(string message)

@@ -4,9 +4,9 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     /// <summary>
     /// Scriptable Object that maintains a registry of all registered persistent IDs.

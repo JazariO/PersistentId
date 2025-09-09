@@ -6,27 +6,30 @@ using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.Linq;
 using System.IO;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     [ExecuteInEditMode]
     public static class PersistentIdManager
     {
-        private static PersistentIdRegistrySO registry => PersistentIdProjectSettings.instance.registry;
+        private static PersistentIdRegistrySO registry;
 
         // NOTE(Jazz): Tracks components by instanceId that contain PersistentIds, keeps a hashset of all unique PersistentId values.
         // Requires clearing on scene open/close in editor.
-        private static TrackedComponentIds trackedComponentIds = new TrackedComponentIds();
-        private const string TRACKED_COMPONENT_IDS_JSON_PATH = "ProjectSettings/Packages/com.proselyte/";
-        private const string TRACKED_COMPONENT_IDS_JSON_FILE_NAME = "PersistentIdSettings.json";
+        private static TrackedComponentIds trackedComponentIds = new();
+        internal const string PERSISTENCE_PROJECT_SETTINGS_PATH = "ProjectSettings/Packages/com.proselyte.persistence";
+        internal const string TRACKED_COMPONENT_IDS_JSON_FILE_NAME = "PersistentIdTrackedComponents.json";
+        internal const string PROJECT_SETTINGS_ASSET_FILE_NAME = "PersistentIdSettings.asset";
 
-        private const string INITIALIZED_KEY = "com.proselyte.persistentid.initialized";
-        private const string REGISTRY_ASSET_PATH = "Assets/Settings/PersistentIdRegistrySO.asset";
+        internal const string INITIALIZED_KEY = "com.proselyte.persistence.initialized";
+        internal const string DEFAULT_REGISTRY_GUID = "com.proselyte.persistence.default_registry_guid";
+        internal const string DEFAULT_REGISTRY_ASSET_PATH = "Assets/Settings/Persistent ID Registry SO.asset";
+        internal const string TEMP_CONST_PATH = "ProjectSettings/PersistentIdSettings.asset";
 
         // NOTE(Jazz): This acts purely as a speed boost to component processing as an early-out guard
         // to avoid reprocessing components. Will be cleared with each domain reload.
-        private static HashSet<int> processedComponentsThisDomainCycle = new HashSet<int>();
+        private static HashSet<int> processedComponentsThisDomainCycle = new();
 
         [MenuItem("Tools/Persistent Id/Print Processed Component Ids", false, 0)]
         public static void PrintProcessedComponentIds()
@@ -63,7 +66,7 @@ namespace Proselyte.PersistentIdSystem
 
             // Construct the full path to the tracking JSON file
             string fullPath = Path.Combine(Application.dataPath, "../" +
-                TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
 
             // Delete the JSON file if it exists
             try
@@ -93,7 +96,7 @@ namespace Proselyte.PersistentIdSystem
         public static void Initialize()
         {
             LogDebug("[PersistentIdManager] Initialize()");
-            PersistentIdProjectSettings.instance.ApplyLoggingSettings();
+            
             if(Application.isPlaying)
             {
                 LogDebug("Editor is in Playmode!");
@@ -101,14 +104,32 @@ namespace Proselyte.PersistentIdSystem
                 return;
             } else
             {
-                LogDebug("Editor is not playing!");
+                LogDebug("Editor is not in play mode!");
             }
 
-            PersistentIdProjectSettings.RehydrateRegistryReference();
-            InitializeOnFirstInstall();
+            // TODO(Jazz): Add better initialization tracking using package version key
+            if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
+            {
+                InitializeOnFirstInstall();
+            }
+            else
+            {
+                LogDebug("Package already initialized, skipping first time setup.");
+            }
+
+            if(EditorPrefs.GetBool(INITIALIZED_KEY,false))
+                PersistentIdProjectSettings.instance.ApplyLoggingSettings();
+            
+            if(!PersistentIdProjectSettings.RehydrateRegistryReference())
+                LogError($"Could not find registry asset at expected path. You may need to " +
+                    $"set the registry asset from Project Settings > {nameof(Persistence)}");
+
 
             if(registry == null)
-            {
+                registry = PersistentIdProjectSettings.instance.registry;
+
+            if(registry == null)
+            { 
                 LogWarning($"[{nameof(PersistentIdManager)}] Registry not set in project settings. Skipping initialization.");
                 return;
             }
@@ -173,81 +194,65 @@ namespace Proselyte.PersistentIdSystem
 
         private static void InitializeOnFirstInstall()
         {
-            // Check the sentinel value in EditorPrefs
-            if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
+            // Sentinel indicates this is a fresh install
+            LogDebug("Detected fresh package installation. Setting up PersistentIdRegistrySO.");
+
+            // Check for an existing registry
+            var existingRegistryGUIDs = AssetDatabase.FindAssets("t:" + nameof(PersistentIdRegistrySO));
+            if(existingRegistryGUIDs.Length > 0)
             {
-                EditorPrefs.SetBool(INITIALIZED_KEY, true);
-
-                // Sentinel indicates this is a fresh install
-                LogDebug("[PersistentIdInitializer] Detected fresh package installation. Setting up PersistentIdRegistrySO.");
-
-                // Check for an existing registry
-                var existingRegistryGUIDs = AssetDatabase.FindAssets("t:" + nameof(PersistentIdRegistrySO));
-                if(existingRegistryGUIDs.Length > 0)
+                var existingRegistryPath = AssetDatabase.GUIDToAssetPath(existingRegistryGUIDs[0]);
+                var existingRegistry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(existingRegistryPath);
+                if(existingRegistry != null)
                 {
-                    var existingRegistryPath = AssetDatabase.GUIDToAssetPath(existingRegistryGUIDs[0]);
-                    var existingRegistry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(existingRegistryPath);
-                    if(existingRegistry != null) return;
+                    EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, existingRegistryGUIDs[0]);
+                    return;
                 }
+            }
 
-                // Create the PersistentIdRegistrySO asset
-                PersistentIdRegistrySO registry = CreateRegistryAsset();
-
-                // Assign the registry to the settings provider
-                if(registry != null && PersistentIdProjectSettings.instance != null)
-                {
-                    PersistentIdProjectSettings.instance.registry = registry;
-                    // Save the settings to ensure the assignment persists
-                    EditorUtility.SetDirty(PersistentIdProjectSettings.instance);
-                    AssetDatabase.SaveAssets();
-                    LogDebug("[PersistentIdInitializer] Assigned PersistentIdRegistrySO to project settings.");
-                }
-                else
-                {
-                    LogWarning("[PersistentIdInitializer] Failed to assign PersistentIdRegistrySO. " +
-                        "Ensure PersistentIdProjectSettings is properly set up.");
-                }
-
-                // Set the sentinel to indicate initialization is complete
-                EditorPrefs.SetBool(INITIALIZED_KEY, true);
-                LogDebug("[PersistentIdInitializer] Package initialization completed.");
+            // Create the PersistentIdRegistrySO asset
+            PersistentIdRegistrySO registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(DEFAULT_REGISTRY_ASSET_PATH);
+            if(registry != null)
+            {
+                LogDebug("[PersistentIdInitializer] Found existing PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
             }
             else
             {
-                LogDebug("[PersistentIdInitializer] Package already initialized, skipping setup.");
-            }
-        }
-
-        private static PersistentIdRegistrySO CreateRegistryAsset()
-        {
-            // Check if the asset already exists
-            PersistentIdRegistrySO registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(REGISTRY_ASSET_PATH);
-            if(registry != null)
-            {
-                LogDebug("[PersistentIdInitializer] Found existing PersistentIdRegistrySO at " + REGISTRY_ASSET_PATH);
-                return registry;
+                // Create a new PersistentIdRegistrySO
+                registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
+                if(registry == null)
+                {
+                    LogError("[PersistentIdInitializer] Failed to create PersistentIdRegistrySO. Aborting first time initialization");
+                    return;
+                }
             }
 
-            // Create a new PersistentIdRegistrySO
-            registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
-            if(registry == null)
-            {
-                LogError("[PersistentIdInitializer] Failed to create PersistentIdRegistrySO.");
-                return null;
-            }
-
-            // Ensure the Assets folder exists
-            if(!Directory.Exists("Assets"))
-            {
-                Directory.CreateDirectory("Assets");
-            }
-
-            // Save the asset to the Assets folder
-            AssetDatabase.CreateAsset(registry, REGISTRY_ASSET_PATH);
+            // Save the registry asset to the Assets folder
+            AssetDatabase.CreateAsset(registry, DEFAULT_REGISTRY_ASSET_PATH);
             AssetDatabase.SaveAssets();
-            LogDebug("[PersistentIdInitializer] Created new PersistentIdRegistrySO at " + REGISTRY_ASSET_PATH);
+            LogDebug("[PersistentIdInitializer] Created new PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
 
-            return registry;
+            // Assign the registry to the settings provider
+            if(registry != null && PersistentIdProjectSettings.instance != null)
+            {
+                var registryGuid = AssetDatabase.GUIDFromAssetPath(DEFAULT_REGISTRY_ASSET_PATH);
+                EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, registryGuid.ToString());
+
+                PersistentIdProjectSettings.instance.registry = registry;
+                // Save the settings to ensure the assignment persists
+                EditorUtility.SetDirty(PersistentIdProjectSettings.instance);
+                AssetDatabase.SaveAssets();
+                LogDebug("Assigned Persistent Id Registry SO to project settings.");
+            }
+            else
+            {
+                LogDebug("Failed to assign PersistentIdRegistrySO. " +
+                    "Ensure PersistentIdProjectSettings is properly set up.");
+            }
+
+            // Set the sentinel to indicate initialization is complete
+            EditorPrefs.SetBool(INITIALIZED_KEY, true);
+            LogDebug("Package initialization completed.");
         }
 
         private static void OnDelayCallInit()
@@ -268,9 +273,9 @@ namespace Proselyte.PersistentIdSystem
 
             // find or create trackedComponentId settings file from ../ProjectSettings directory
             string fullPath = Path.Combine(Application.dataPath, "../" +
-                TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
             string directoryPath = Path.Combine(Application.dataPath, "../" +
-                TRACKED_COMPONENT_IDS_JSON_PATH);
+                PERSISTENCE_PROJECT_SETTINGS_PATH);
 
             string sessionStateKey = "sessionActive";
             bool sessionWasActive = SessionState.GetBool(sessionStateKey, false);
@@ -503,9 +508,9 @@ namespace Proselyte.PersistentIdSystem
         private static void ReadTrackedIdDataFromJSON()
         {
             string fullPath = Path.Combine(Application.dataPath, "../" + 
-                TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
             string directoryPath = Path.Combine(Application.dataPath, "../" + 
-                TRACKED_COMPONENT_IDS_JSON_PATH);
+                PERSISTENCE_PROJECT_SETTINGS_PATH);
 
             if(System.IO.File.Exists(fullPath))
             {
@@ -591,7 +596,7 @@ namespace Proselyte.PersistentIdSystem
             // with the current trackedComponentsIds dictionary
             { 
                 string fullPath = Path.Combine(Application.dataPath, "../" + 
-                    TRACKED_COMPONENT_IDS_JSON_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+                    PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
                 LogDebug("Writing tracked component ids data to JSON file at: " + fullPath);
 
                 // create settings json file if it doesn't exist

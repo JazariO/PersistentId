@@ -1,5 +1,5 @@
 using UnityEngine;
-using Proselyte.PersistentIdSystem;
+using Proselyte.Persistence;
 using System.Collections.Generic;
 
 public class ExampleSaveableComponent : MonoBehaviour

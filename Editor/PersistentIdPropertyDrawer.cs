@@ -1,9 +1,9 @@
 #if UNITY_EDITOR
 using UnityEngine;
 using UnityEditor;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     /// <summary>
     /// Custom property drawer for PersistentId that makes the field read-only in inspector

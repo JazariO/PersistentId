@@ -1,6 +1,6 @@
 {
     "name": "PersistentIdCoreAsemDef",
-    "rootNamespace": "Proselyte.PersistentIdSystem",
+    "rootNamespace": "Proselyte.Persistence",
     "references": [],
     "includePlatforms": [],
     "excludePlatforms": [],

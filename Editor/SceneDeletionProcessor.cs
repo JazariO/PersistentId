@@ -1,9 +1,9 @@
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     /// <summary>
     /// Handles removing any registered persistent ids that correspond 
@@ -16,13 +16,6 @@ namespace Proselyte.PersistentIdSystem
         static void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets,
             string[] movedAssets, string[] movedFromAssetPaths)
         {
-            if(Registry == null)
-            {
-                PersistentIdLogger.LogWarning("Missing Persistent Id Registry scriptable object on scene deletion. " +
-                    "Scene ids may be out of sync.");
-                return;
-            }
-
             foreach(var asset in importedAssets )
             {
                 if(asset.EndsWith(".unity"))
@@ -36,6 +29,13 @@ namespace Proselyte.PersistentIdSystem
             {
                 if(deletedAsset.EndsWith(".unity")) // Scene file
                 {
+                    if(Registry == null)
+                    {
+                        PersistentIdLogger.LogWarning("Missing Persistent Id Registry scriptable object on scene deletion. " +
+                            "Scene ids may be out of sync.");
+                        return;
+                    }
+
                     string sceneGuid = AssetDatabase.AssetPathToGUID(deletedAsset);
                     if(!string.IsNullOrEmpty(sceneGuid))
                     {

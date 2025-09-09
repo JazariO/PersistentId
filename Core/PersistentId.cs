@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
     /// <summary>
     /// Serializable struct that stores a persistent uint ID for game objects.

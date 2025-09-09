@@ -1,76 +1,10 @@
 #if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
-using static Proselyte.PersistentIdSystem.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdLogger;
 
-namespace Proselyte.PersistentIdSystem
+namespace Proselyte.Persistence
 {
-    // Data Layer - Scriptable Singleton
-    [System.Serializable]
-    [FilePath("ProjectSettings/PersistentIdSettings.asset", FilePathAttribute.Location.ProjectFolder)]
-    public class PersistentIdProjectSettings : ScriptableSingleton<PersistentIdProjectSettings>
-    {
-        [SerializeField]
-        public PersistentIdRegistrySO registry;
-
-        [SerializeField]
-        public PersistentIdLogger.LogSeverity logSeverity = PersistentIdLogger.LogSeverity.Warning;
-
-        public void ApplyLoggingSettings()
-        {
-            PersistentIdLogger.MinimumSeverity = logSeverity;
-        }
-
-        public static void RehydrateRegistryReference()
-        {
-            var settings = PersistentIdProjectSettings.instance;
-            settings.ApplyLoggingSettings();
-
-            if(settings.registry == null)
-            {
-                // Try to find the registry asset by GUID
-                string registryPath = AssetDatabase.GUIDToAssetPath("8a172499b22b87c448b889145c836286");
-                var registryAsset = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(registryPath);
-
-                if(registryAsset != null)
-                {
-                    settings.registry = registryAsset;
-                    settings.Save(true); // Save the reference back to the asset
-                    LogDebug("Registry reference restored after editor reload.");
-                }
-                else
-                {
-                    LogError($"Could not find registry asset at expected path. You may need to set the registry asset from Project Settings > {nameof(PersistentId)}");
-                }
-            }
-        }
-
-        public void SaveRegistryRef()
-        {
-            LogDebug("Saving PersistentIdProjectSettings registry.");
-
-            // Ensure directory exists
-            string directory = System.IO.Path.GetDirectoryName(GetFilePath());
-            if(!System.IO.Directory.Exists(directory))
-            {
-                System.IO.Directory.CreateDirectory(directory);
-            }
-
-            LogDebug($"Saving to path: {GetFilePath()}");
-            Save(true);
-
-            // Verify the file exists after save
-            if(System.IO.File.Exists(GetFilePath()))
-            {
-                LogDebug("File saved successfully!");
-            }
-            else
-            {
-                LogError("File was not saved!");
-            }
-        }
-    }
-
     // UI Layer - Settings Provider
     public class PersistentIdSettingsProvider : SettingsProvider
     {
@@ -133,7 +67,9 @@ namespace Proselyte.PersistentIdSystem
                             // Apply the change and reinitialize
                             m_SerializedObject.ApplyModifiedProperties();
 
-                            PersistentIdProjectSettings.instance.SaveRegistryRef();
+                            if(m_RegistryProperty.objectReferenceValue != null)
+                                PersistentIdProjectSettings.instance.SaveRegistryRef();
+                            
                             // Reinitialize the manager with new registry and cleared tracking data
                             PersistentIdManager.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
@@ -148,8 +84,10 @@ namespace Proselyte.PersistentIdSystem
                     }
                     else
                     {
-                        // No confirmation needed - apply directly
                         m_SerializedObject.ApplyModifiedProperties();
+                        
+                        if(m_RegistryProperty.objectReferenceValue != null)
+                            PersistentIdProjectSettings.instance.SaveRegistryRef();
                         PersistentIdProjectSettings.instance.SaveRegistryRef();
                         EditorUtility.RequestScriptReload();
                     }
