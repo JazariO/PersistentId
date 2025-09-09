@@ -4,6 +4,7 @@
   "displayName": "Persistent ID System",
   "description": "A Unity package for managing persistent unique IDs across editor sessions, domain reloads, editor playmode and standalone builds. Compatible with scene gameobjects and prefabs.",
   "unity": "6000.0",
+  "license": "MIT",
   "author": {
     "name": "Jazari",
     "url": "https://github.com/JazariO"
