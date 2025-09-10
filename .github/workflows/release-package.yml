@@ -20,7 +20,7 @@ jobs:
         uses: actions/github-script@v6
         id: filelist
         with:
-          result-encoding: json
+          result-encoding: string
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -46,11 +46,10 @@ jobs:
                   }
                 }
               }
-              return results;
+              return results.join('\n');
             };
       
-            const files = walk('.');
-            return files;
+            return walk('.');
 
       - name: Show filtered file list
         run: echo "${{ steps.filelist.outputs.result }}"
