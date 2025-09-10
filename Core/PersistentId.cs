@@ -3,9 +3,11 @@ using UnityEngine;
 namespace Proselyte.Persistence
 {
     /// <summary>
-    /// Serializable struct that stores a persistent uint ID for game objects.
-    /// Does not inherit from MonoBehaviour - designed to be composed into a MonoBehaviour as a property.
+    /// Editor-generated stable unique ID for game objects.
+    /// Does not inherit from MonoBehaviour - 
+    /// designed to be composed into a MonoBehaviour as an exposed property.
     /// </summary>
+
     [System.Serializable]
     public struct PersistentId
     {

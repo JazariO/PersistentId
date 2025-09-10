@@ -47,7 +47,7 @@ namespace Proselyte.Persistence
                 ShowRegistryInfo();
 
                 EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Logging Configuration", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Debugging Configuration", EditorStyles.boldLabel);
                 EditorGUILayout.Space();
 
                 var severityProperty = m_SerializedObject.FindProperty(nameof(PersistentIdProjectSettings.logSeverity));

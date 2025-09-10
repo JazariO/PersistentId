@@ -1,5 +1,5 @@
 {
-    "name": "PersistentIdCoreAsemDef",
+    "name": "Proselyte.Persistence",
     "rootNamespace": "Proselyte.Persistence",
     "references": [],
     "includePlatforms": [],
