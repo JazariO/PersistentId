@@ -15,12 +15,12 @@ jobs:
       
       - name: Generate filtered meta file list
         run: |
-          echo "Starting file list generation..."
+          echo "Starting file list generation from PersistentId folder..."
           
           # Initialize the meta list file
           > metaList
           
-          # Function to check if a path should be ignored
+          # Function to check if a path should be ignored (keeping for consistency)
           should_ignore() {
             local path="$1"
             if [ -f ".unitypackage-ignore" ]; then
@@ -37,26 +37,25 @@ jobs:
             return 1  # Should not ignore
           }
           
-          echo "Finding all .meta files..."
-          # Find all .meta files
+          # Add the PersistentId folder meta file first
+          echo "PersistentId.meta" >> metaList
+          echo "Including base folder: PersistentId.meta"
+          
+          echo "Finding all .meta files in PersistentId folder..."
+          # Find all .meta files within the PersistentId folder
           while IFS= read -r -d '' metafile; do
             # Remove leading "./" 
             clean_path="${metafile#./}"
             
-            # Check if this file should be ignored
-            if ! should_ignore "$clean_path"; then
-              echo "$clean_path" >> metaList
-              echo "Including: $clean_path"
-            else
-              echo "Ignoring: $clean_path"
-            fi
-          done < <(find . -name "*.meta" -print0)
+            echo "$clean_path" >> metaList
+            echo "Including: $clean_path"
+          done < <(find PersistentId -name "*.meta" -print0)
           
-          echo "Finding directory .meta files..."
-          # Find .meta files for directories (these end with .meta and represent folders in Unity)
+          echo "Finding directory .meta files in PersistentId..."
+          # Find .meta files for directories within PersistentId
           while IFS= read -r -d '' dir; do
-            # Skip the root directory
-            [[ "$dir" == "." ]] && continue
+            # Skip the PersistentId root directory itself
+            [[ "$dir" == "PersistentId" ]] && continue
             
             # Remove leading "./"
             clean_path="${dir#./}"
@@ -64,16 +63,10 @@ jobs:
             # Check for corresponding .meta file for this directory
             if [ -f "${dir}.meta" ]; then
               meta_path="${clean_path}.meta"
-              
-              # Check if this directory meta file should be ignored
-              if ! should_ignore "$meta_path" && ! should_ignore "$clean_path"; then
-                echo "$meta_path" >> metaList
-                echo "Including directory meta: $meta_path"
-              else
-                echo "Ignoring directory meta: $meta_path"
-              fi
+              echo "$meta_path" >> metaList
+              echo "Including directory meta: $meta_path"
             fi
-          done < <(find . -type d -print0)
+          done < <(find PersistentId -type d -print0)
           
           # Remove any duplicate entries and sort
           sort metaList | uniq > metaList.tmp && mv metaList.tmp metaList
@@ -87,8 +80,7 @@ jobs:
           # Verify the file exists and has content
           if [ ! -s metaList ]; then
             echo "ERROR: metaList is empty!"
-            echo "Creating a basic metaList with essential files..."
-            find . -name "*.meta" | sed 's|^\./||' > metaList
+            exit 1
           fi
           
           echo "Final metaList size: $(wc -l < metaList) lines"
