@@ -1,5 +1,5 @@
 # Persistent Id
-![Unity 6 Compatible](https://img.shields.io/badge/Unity-6.0%2B-blue?logo=unity)
+![Unity 6 Compatible](https://img.shields.io/badge/Unity-6000.0 LTS-blue?logo=unity) ![MIT License](https://img.shields.io/badge/License-MIT-green?logo=data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjAwIDIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBzdHlsZT0iZmlsbDojZmZmO3N0cm9rZTojZmZmO3N0cm9rZS13aWR0aDozLjgxO3N0cm9rZS1saW5lY2FwOnJvdW5kO3N0cm9rZS1saW5lam9pbjpyb3VuZCIgZD0iTTE0MCAxNTBINjBjMCAwIDEwLTUgNDAtNXM0MCA1IDQwIDV6Ii8+PHBhdGggc3R5bGU9ImZpbGw6I2VjNGE2MTtzdHJva2U6I2ZmZjtzdHJva2Utd2lkdGg6OCBzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmQiIGQ9Ik0xMDAgMjV2MTI1Ii8+PHBhdGggc3R5bGU9ImZpbGw6bm9uZTtzdHJva2U6I2ZmZjtzdHJva2Utd2lkdGg6OCBzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmQiIGQ9Ik0xNTAgMzBINTBMNzUgNzBIMjVMNTAgMzAiLz48cGF0aCBzdHlsZT0iZmlsbDpub25lO3N0cm9rZTojZmZmZjtzdHJva2Utd2lkdGg6My44MTtzdHJva2UtbGluZWNhcDpyb3VuZDtzdHJva2UtbGluZWpvaW46cm91bmQiIGQ9Ik0xMjUgNzBoNTBMMTUwIDMweiIvPjxwYXRoIHN0eWxlPSJmaWxsOiNmZmY7c3Ryb2tlOiNmZmY7c3Ryb2tlLXdpZHRoOjMuODE7c3Ryb2tlLWxpbmVjYXA6cm91bmQ7c3Ryb2tlLWxpbmVqb2luOnJvdW5kIiBkPSJNNzUgNzBhMjUgMjAgMCAwIDEtMTIuNSAxNy4zMiAyNSAyMCAwIDAgMS0yNSAwQTI1IDIwIDAgMCAxIDI1IDcwaDI1eiIvPjxwYXRoIHN0eWxlPSJmaWxsOiNmZmY7c3Ryb2tlOiNmZmY7c3Ryb2tlLXdpZHRoOjMuODE7c3Ryb2tlLWxpbmVjYXA6cm91bmQ7c3Ryb2tlLWxpbmVqb2luOnJvdW5kIiBkPSJNMTc1IDcwYTI1IDIwIDAgMCAxLTEyLjUgMTcuMzIgMjUgMjAgMCAwIDEtMjUgMEEyNSAyMCAwIDAgMSAxMjUgNzBoMjV6Ii8+PC9zdmc+)
 
 Persistent Id is a stable, lightweight editor-time unique ID system for Unity.  
 Designed to be dropped into existing projects - "declare and forget" - these identifiers remain **rock-solid** and **dependable** across scene-based workflows:
@@ -61,7 +61,7 @@ PersistentId takes a different approach: it’s lightweight and relies on editor
 
 Persistent Id is optimized for **static scene-based workflows** where objects exist in the editor and need stable identifiers across sessions and builds. It’s brilliant for save systems or analytics—but if your game leans heavily on runtime instantiation, procedural content, or asset-level tracking, you’ll need to extend or supplement it.
 
-# Tradeoffs
+## Tradeoffs
 | Feature Benefit               | Drawback                                                                      |
 |-------------------------------|-------------------------------------------------------------------------------|
 | Editor-only Generation        | No runtime generation for dynamic objects                                     |
@@ -69,3 +69,14 @@ Persistent Id is optimized for **static scene-based workflows** where objects ex
 | Zero runtime overhead         | No runtime flexibility or dynamic assignment                                  |
 | Fire-and-forget simplicity    | No public API for ID registration or generation, fully handled by the editor  |
 
+## FAQ
+**Does it work with prefabs?**
+You can use persistent ids with prefab _instances_, however as of version v0.1.14 prefab assets (the .prefab file in your project window) do not generate persistent ids.  
+Any prefab gameObject instanced in a scene will still generate its own persistent unique id.
+---
+**Is it compatible with Unity serialization?**
+Absolutely, the id value itself is a uint, and the PersistentId base class has been attributed with `[System.Serializable]`
+---
+**Does it work with runtime-instantiated objects?**
+Currently no, this persistence system is designed to create persistent IDs that can be generated at editor-time and will never change. This is better suited to objects that are not spawned or instantiated at runtime.
+---

@@ -1,0 +1,32 @@
+name: Build and Upload Unity Package
+
+on:
+  release:
+    types: [published]  # Trigger only when a release is published
+
+jobs:
+  build-package:
+    name: Build and Upload UnityPackage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Generate .unitypackage
+        uses: pCYSl5EDgo/create-unitypackage@master
+        with:
+          package-path: com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage
+          include-files: |
+            Assets/PersistentId.meta
+            Assets/PersistentId/**
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
