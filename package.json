@@ -8,8 +8,5 @@
   "author": {
     "name": "Jazari",
     "url": "https://github.com/JazariO"
-  },
-  "dependencies": {
-    "gh": "^2.8.9"
   }
 }
