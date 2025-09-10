@@ -33,4 +33,4 @@ jobs:
           name: Release ${{ github.event.release.tag_name }}
           files: com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
