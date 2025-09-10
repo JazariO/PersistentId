@@ -46,10 +46,22 @@ jobs:
                   }
                 }
               }
-              return results.join('\n');
+              return results;
             };
       
-            const files = walk('.');
+            let files;
+            try {
+              files = walk('.');
+            } catch (err) {
+              console.error('Error walking directory:', err);
+              return '';
+            }
+      
+            if (!Array.isArray(files)) {
+              console.error('walk() did not return an array');
+              return '';
+            }
+      
             fs.writeFileSync('fileList.txt', files.join('\n'));
             return files.join('\n');
 
