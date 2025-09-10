@@ -15,7 +15,7 @@ namespace Proselyte.Persistence
     {
         void OnEnable()
         {
-            Debug.Log("On Enable Persistent Id Project Settings. [Creating Path]");
+            LogDebug("On Enable Persistent Id Project Settings. [Creating Path]");
             string fullPath = Path.Combine(Application.dataPath, "../" + PERSISTENCE_PROJECT_SETTINGS_PATH);
             if(!Directory.Exists(fullPath))
             {
@@ -36,7 +36,7 @@ namespace Proselyte.Persistence
 
         public static bool RehydrateRegistryReference()
         {
-            Debug.Log("Rehydrating Project Settings data");
+            LogDebug("Rehydrating Project Settings data");
             var settings = PersistentIdProjectSettings.instance;
             settings.ApplyLoggingSettings();
 
