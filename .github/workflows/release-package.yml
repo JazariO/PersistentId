@@ -18,7 +18,6 @@ jobs:
       - name: Generate file list
         run: |
           find . -name '*.meta' > fileList
-          find . -type d >> fileList
 
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
