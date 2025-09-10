@@ -1,0 +1,5 @@
+.gitignore
+.unitypackage-ignore
+.github/
+.git/
+Docs/
