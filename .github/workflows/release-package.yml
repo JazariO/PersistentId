@@ -17,8 +17,8 @@ jobs:
           fetch-depth: 0
       - name: Generate file list
         run: |
-          find PersistentId/ -name '*.meta' > fileList
-          find PersistentId/ -type d >> fileList
+          find . -name '*.meta' > fileList
+          find . -type d >> fileList
 
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
