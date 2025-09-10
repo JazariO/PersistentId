@@ -16,12 +16,16 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
 
+      - name: Generate meta file list
+        run: |
+          echo "Assets/PersistentId.meta" > metaList.txt
+          find Assets/PersistentId -name '*.meta' >> metaList.txt
+
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           package-path: com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage
-          include-files: >
-            ["Assets/PersistentId.meta", "Assets/PersistentId/**"]
+          include-files: metaList.txt
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
