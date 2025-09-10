@@ -13,71 +13,109 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
       
-      - name: Generate filtered file list
-        uses: actions/github-script@v6
-        id: filelist
-        with:
-          result-encoding: string
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-      
-            const ignorePatterns = fs.readFileSync('.unitypackage-ignore', 'utf8')
-              .split('\n')
-              .map(line => line.trim())
-              .filter(line => line && !line.startsWith('#'));
-      
-            const walk = (dir) => {
-              let results = [];
-              for (const file of fs.readdirSync(dir)) {
-                const fullPath = path.join(dir, file);
-                const relPath = path.relative('.', fullPath);
-                if (ignorePatterns.some(p => relPath.startsWith(p) || new RegExp(p).test(relPath))) continue;
-                const stat = fs.statSync(fullPath);
-                if (stat.isDirectory()) {
-                  results = results.concat(walk(fullPath));
-                } else {
-                  results.push(relPath);
-                  if (fs.existsSync(`${fullPath}.meta`)) {
-                    results.push(`${relPath}.meta`);
-                  }
-                }
-              }
-              return results;
-            };
-      
-            let files;
-            try {
-              files = walk('.');
-            } catch (err) {
-              console.error('Error walking directory:', err);
-              return '';
-            }
-      
-            if (!Array.isArray(files)) {
-              console.error('walk() did not return an array');
-              return '';
-            }
-      
-            // Write to file for the action to read
-            fs.writeFileSync('fileList.txt', files.join('\n'));
-            console.log(`Generated file list with ${files.length} files`);
-            return files.join('\n');
-      
-      - name: Debug file list
+      - name: Generate filtered meta file list
         run: |
-          echo "File count: $(wc -l < fileList.txt)"
-          echo "First 10 files:"
-          head -10 fileList.txt
+          echo "Starting file list generation..."
+          
+          # Initialize the meta list file
+          > metaList
+          
+          # Function to check if a path should be ignored
+          should_ignore() {
+            local path="$1"
+            if [ -f ".unitypackage-ignore" ]; then
+              while IFS= read -r pattern; do
+                # Skip empty lines and comments
+                [[ -z "$pattern" || "$pattern" =~ ^#.*$ ]] && continue
+                
+                # Check if the path matches the pattern
+                if [[ "$path" == $pattern* ]] || [[ "$path" =~ $pattern ]]; then
+                  return 0  # Should ignore
+                fi
+              done < ".unitypackage-ignore"
+            fi
+            return 1  # Should not ignore
+          }
+          
+          echo "Finding all .meta files..."
+          # Find all .meta files
+          while IFS= read -r -d '' metafile; do
+            # Remove leading "./" 
+            clean_path="${metafile#./}"
+            
+            # Check if this file should be ignored
+            if ! should_ignore "$clean_path"; then
+              echo "$clean_path" >> metaList
+              echo "Including: $clean_path"
+            else
+              echo "Ignoring: $clean_path"
+            fi
+          done < <(find . -name "*.meta" -print0)
+          
+          echo "Finding directories that contain assets..."
+          # Find directories and check if they should be included
+          while IFS= read -r -d '' dir; do
+            # Skip the root directory
+            [[ "$dir" == "." ]] && continue
+            
+            # Remove leading "./"
+            clean_path="${dir#./}"
+            
+            # Check if this directory should be ignored
+            if ! should_ignore "$clean_path"; then
+              # Only add directories that contain .meta files or other asset files
+              if find "$dir" -maxdepth 1 \( -name "*.meta" -o -name "*.cs" -o -name "*.json" -o -name "*.asmdef" -o -name "*.md" -o -name "*.unity" -o -name "*.prefab" -o -name "*.asset" \) -print -quit | grep -q .; then
+                echo "$clean_path" >> metaList
+                echo "Including directory: $clean_path"
+              fi
+            else
+              echo "Ignoring directory: $clean_path"
+            fi
+          done < <(find . -type d -print0)
+          
+          # Remove any duplicate entries and sort
+          sort metaList | uniq > metaList.tmp && mv metaList.tmp metaList
+          
+          echo ""
+          echo "=== FINAL META LIST ==="
+          cat metaList
+          echo ""
+          echo "Total entries: $(wc -l < metaList)"
+          
+          # Verify the file exists and has content
+          if [ ! -s metaList ]; then
+            echo "ERROR: metaList is empty!"
+            echo "Creating a basic metaList with essential files..."
+            find . -name "*.meta" | sed 's|^\./||' > metaList
+          fi
+          
+          echo "Final metaList size: $(wc -l < metaList) lines"
       
-      - name: Show filtered file list
-        run: cat fileList.txt
+      - name: Debug ignore file content
+        run: |
+          if [ -f ".unitypackage-ignore" ]; then
+            echo "=== UNITY PACKAGE IGNORE FILE CONTENT ==="
+            cat .unitypackage-ignore
+            echo "=== END IGNORE FILE ==="
+          else
+            echo "No .unitypackage-ignore file found"
+          fi
       
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           package-path: "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage"
-          project-folder: "."
+          include-files: metaList
+      
+      - name: Verify package was created
+        run: |
+          if [ -f "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage" ]; then
+            echo "Unity package created successfully!"
+            ls -la "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage"
+          else
+            echo "Unity package was not created!"
+            exit 1
+          fi
       
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
