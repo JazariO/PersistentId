@@ -1,14 +1,11 @@
 name: Build and Upload Unity Package
-
 on:
   release:
     types: [published]
-
 jobs:
   build-package:
     name: Build and Upload UnityPackage
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository at release tag
         uses: actions/checkout@v4
@@ -62,18 +59,26 @@ jobs:
               return '';
             }
       
+            // Write to file for the action to read
             fs.writeFileSync('fileList.txt', files.join('\n'));
+            console.log(`Generated file list with ${files.length} files`);
             return files.join('\n');
-
+      
+      - name: Debug file list
+        run: |
+          echo "File count: $(wc -l < fileList.txt)"
+          echo "First 10 files:"
+          head -10 fileList.txt
+      
       - name: Show filtered file list
         run: cat fileList.txt
-
+      
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           package-path: "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage"
-          include-files: ${{ steps.filelist.outputs.result }}
-
+          project-folder: "."
+      
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
         with:
