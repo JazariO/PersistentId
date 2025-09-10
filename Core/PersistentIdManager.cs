@@ -83,7 +83,7 @@ namespace Proselyte.Persistence
             }
             catch(System.Exception ex)
             {
-                LogError($"Failed to delete tracking file at {fullPath}: {ex.Message}");
+                LogError($"Error - Failed to delete tracking file at {fullPath}: {ex.Message}");
             }
 
             // Clear session state
@@ -130,7 +130,7 @@ namespace Proselyte.Persistence
 
             if(registry == null)
             { 
-                LogWarning($"[{nameof(PersistentIdManager)}] Registry not set in project settings. Skipping initialization.");
+                LogWarning($"Registry not set in project settings. Skipping initialization.");
                 return;
             }
 

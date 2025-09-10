@@ -19,7 +19,7 @@ namespace Proselyte.Persistence
 
         private static string FormatMessage(string message, LogSeverity severity)
         {
-            return $"[{nameof(Persistence)}][{severity}] {message}";
+            return $"[{nameof(Proselyte)}.{nameof(Persistence)}][{severity}] {message}";
         }
 
         public static void LogDebug(string message)
