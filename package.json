@@ -1,6 +1,6 @@
 {
   "name": "com.proselyte.persistence",
-  "version": "0.1.20-alpha",
+  "version": "0.1.21-alpha",
   "displayName": "Persistent ID System",
   "description": "A Unity package for managing persistent unique IDs across editor sessions, domain reloads, editor playmode and standalone builds. Compatible with scene gameobjects and prefabs.",
   "unity": "6000.0",
