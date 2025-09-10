@@ -13,6 +13,78 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0
       
+      - name: Reorganize files with base PersistentId folder
+        run: |
+          echo "Creating PersistentId base folder structure..."
+          
+          # Create the base directory structure
+          mkdir -p PersistentId
+          
+          # Function to check if a path should be ignored
+          should_ignore() {
+            local path="$1"
+            if [ -f ".unitypackage-ignore" ]; then
+              while IFS= read -r pattern; do
+                # Skip empty lines and comments
+                [[ -z "$pattern" || "$pattern" =~ ^#.*$ ]] && continue
+                
+                # Check if the path matches the pattern
+                if [[ "$path" == $pattern* ]] || [[ "$path" =~ $pattern ]]; then
+                  return 0  # Should ignore
+                fi
+              done < ".unitypackage-ignore"
+            fi
+            return 1  # Should not ignore
+          }
+          
+          # Copy files and directories to PersistentId folder, excluding ignored items
+          for item in *; do
+            # Skip the PersistentId directory we just created and common Git/CI files
+            [[ "$item" == "PersistentId" || "$item" == ".git" || "$item" == ".github" ]] && continue
+            
+            # Check if this item should be ignored
+            if ! should_ignore "$item"; then
+              echo "Copying $item to PersistentId/"
+              cp -r "$item" "PersistentId/"
+            else
+              echo "Ignoring $item"
+            fi
+          done
+          
+          # Create .meta file for the PersistentId folder with a proper GUID
+          # Try multiple methods to generate a GUID
+          if command -v python3 &> /dev/null; then
+            GUID=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
+          elif command -v uuidgen &> /dev/null; then
+            GUID=$(uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]')
+          else
+            # Fallback: generate a pseudo-random 32-char hex string
+            GUID=$(openssl rand -hex 16)
+          fi
+          
+          cat > PersistentId.meta << EOF
+          fileFormatVersion: 2
+          guid: $GUID
+          folderAsset: yes
+          DefaultImporter:
+            externalObjects: {}
+            userData: 
+            assetBundleName: 
+            assetBundleVariant: 
+          EOF
+          
+          echo "PersistentId folder structure created:"
+          find PersistentId -type f | head -20
+          
+          echo "Verifying PersistentId.meta file:"
+          if [ -f "PersistentId.meta" ]; then
+            echo "PersistentId.meta created successfully"
+            cat PersistentId.meta
+          else
+            echo "ERROR: PersistentId.meta not found!"
+            exit 1
+          fi
+      
       - name: Generate filtered meta file list
         run: |
           echo "Starting file list generation from PersistentId folder..."
@@ -107,7 +179,7 @@ jobs:
             echo "Unity package created successfully!"
             ls -la "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage"
           else
-            echo "Unity package was not created!"
+            echo "ERROR: Unity package was not created!"
             exit 1
           fi
       
