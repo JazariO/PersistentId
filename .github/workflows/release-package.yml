@@ -52,8 +52,8 @@ jobs:
             fi
           done < <(find . -name "*.meta" -print0)
           
-          echo "Finding directories that contain assets..."
-          # Find directories and check if they should be included
+          echo "Finding directory .meta files..."
+          # Find .meta files for directories (these end with .meta and represent folders in Unity)
           while IFS= read -r -d '' dir; do
             # Skip the root directory
             [[ "$dir" == "." ]] && continue
@@ -61,15 +61,17 @@ jobs:
             # Remove leading "./"
             clean_path="${dir#./}"
             
-            # Check if this directory should be ignored
-            if ! should_ignore "$clean_path"; then
-              # Only add directories that contain .meta files or other asset files
-              if find "$dir" -maxdepth 1 \( -name "*.meta" -o -name "*.cs" -o -name "*.json" -o -name "*.asmdef" -o -name "*.md" -o -name "*.unity" -o -name "*.prefab" -o -name "*.asset" \) -print -quit | grep -q .; then
-                echo "$clean_path" >> metaList
-                echo "Including directory: $clean_path"
+            # Check for corresponding .meta file for this directory
+            if [ -f "${dir}.meta" ]; then
+              meta_path="${clean_path}.meta"
+              
+              # Check if this directory meta file should be ignored
+              if ! should_ignore "$meta_path" && ! should_ignore "$clean_path"; then
+                echo "$meta_path" >> metaList
+                echo "Including directory meta: $meta_path"
+              else
+                echo "Ignoring directory meta: $meta_path"
               fi
-            else
-              echo "Ignoring directory: $clean_path"
             fi
           done < <(find . -type d -print0)
           
