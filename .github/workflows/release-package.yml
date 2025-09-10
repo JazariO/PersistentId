@@ -18,9 +18,7 @@ jobs:
       
       - name: Generate filtered file list
         uses: actions/github-script@v6
-        id: filelist
         with:
-          result-encoding: string
           script: |
             const fs = require('fs');
             const path = require('path');
@@ -46,19 +44,20 @@ jobs:
                   }
                 }
               }
-              return results.join('\n');
+              return results;
             };
       
-            return walk('.');
+            const files = walk('.');
+            fs.writeFileSync('fileList.txt', files.join('\n'));
 
       - name: Show filtered file list
-        run: echo "${{ steps.filelist.outputs.result }}"
+        run: cat fileList.txt
 
       - name: Generate .unitypackage
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           package-path: "com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage"
-          include-files: ${{ steps.filelist.outputs.result }}
+          include-files: fileList.txt
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
