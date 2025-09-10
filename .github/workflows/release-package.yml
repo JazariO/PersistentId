@@ -20,9 +20,8 @@ jobs:
         uses: pCYSl5EDgo/create-unitypackage@master
         with:
           package-path: com.proselyte.persistence-${{ github.event.release.tag_name }}.unitypackage
-          include-files: |
-            Assets/PersistentId.meta
-            Assets/PersistentId/**
+          include-files: >
+            ["Assets/PersistentId.meta", "Assets/PersistentId/**"]
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v1
