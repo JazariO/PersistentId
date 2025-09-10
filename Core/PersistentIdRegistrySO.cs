@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using static Proselyte.Persistence.PersistentIdLogger;
@@ -127,6 +128,26 @@ namespace Proselyte.Persistence
 
             sceneIdRegistry[sceneGuid].Add(id);
             UpdateSerializedData();
+
+            // Get scene reference
+            var scenePath = AssetDatabase.GUIDToAssetPath(sceneGuid);
+            var scene = EditorSceneManager.GetSceneByPath(scenePath);
+            if(scene == null)
+            {
+                LogError($"Scene not found at path {scenePath} while using the editor.");
+            }
+
+            // track unsavedIds
+            if(scene.isDirty)
+            {
+                if(!PersistentIdManager.unsavedIds.TryGetValue(sceneGuid, out var idSet))
+                {
+                    idSet = new HashSet<uint>();
+                    PersistentIdManager.unsavedIds[sceneGuid] = idSet;
+                }
+                idSet.Add(id);
+            }
+
             return true;
         }
 

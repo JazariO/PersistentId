@@ -7,6 +7,7 @@ using UnityEngine.SceneManagement;
 using System.Linq;
 using System.IO;
 using static Proselyte.Persistence.PersistentIdLogger;
+using static Proselyte.Persistence.PersistentIdRegistrySO;
 
 namespace Proselyte.Persistence
 {
@@ -30,6 +31,8 @@ namespace Proselyte.Persistence
         // NOTE(Jazz): This acts purely as a speed boost to component processing as an early-out guard
         // to avoid reprocessing components. Will be cleared with each domain reload.
         private static HashSet<int> processedComponentsThisDomainCycle = new();
+
+        internal static Dictionary<string, HashSet<uint>> unsavedIds = new();
 
         [MenuItem("Tools/Persistent Id/Print Processed Component Ids", false, 0)]
         public static void PrintProcessedComponentIds()
@@ -154,6 +157,9 @@ namespace Proselyte.Persistence
 
             EditorApplication.delayCall -= OnDelayCallInit;
             EditorApplication.delayCall += OnDelayCallInit;
+
+            EditorSceneManager.sceneSaved -= OnSceneSaved;
+            EditorSceneManager.sceneSaved += OnSceneSaved;
         }
 
         private static void OnPlaymodeChanged(PlayModeStateChange state)
@@ -681,7 +687,11 @@ namespace Proselyte.Persistence
         }
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            if(!scene.isLoaded) return;
+            if(!scene.isLoaded)
+            {
+                Debug.Log("Opening Scene: Scene is not loaded yet");
+                return;
+            }
 
             LogDebug("Editor Scene Opened.");
 
@@ -695,6 +705,7 @@ namespace Proselyte.Persistence
             }
 
             bool sceneModified = false;
+            List<uint> openedScenePersistentIDs = new();
 
             foreach(var component in allComponents)
             {
@@ -729,6 +740,8 @@ namespace Proselyte.Persistence
                         if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
                             trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
                         trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
+
+                        openedScenePersistentIDs.Add(newId);
                     }
                     // Handle duplicate detection for non-zero IDs
                     else if(registry.IsIdRegisteredGlobally(currentId))
@@ -743,6 +756,8 @@ namespace Proselyte.Persistence
                                 trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
                             trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
                             // No need to re-register or modify - it's already correctly set up
+
+                            openedScenePersistentIDs.Add(currentId);
                         }
                         else
                         {
@@ -753,13 +768,15 @@ namespace Proselyte.Persistence
                             componentModified = true;
                             sceneModified = true;
 
-                            LogWarning($"[{nameof(PersistentIdManager)}] Duplicate {nameof(PersistentId)} {currentId} detected on {component.name} in scene '{scene.name}'. Generated new ID {newId} (Hex: 0x{newId:X8}).");
+                            LogWarning($"Duplicate {nameof(PersistentId)} 0x{currentId:X8} detected on {component.name} in scene '{scene.name}'. Generated new ID {newId} (Hex: 0x{newId:X8}).");
 
                             // Update tracking
                             var instanceId = component.GetInstanceID();
                             if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
                                 trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
                             trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
+
+                            openedScenePersistentIDs.Add(newId);
                         }
                     }
                     else
@@ -770,6 +787,8 @@ namespace Proselyte.Persistence
                         if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
                             trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
                         trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
+
+                        openedScenePersistentIDs.Add(currentId);
                     }
                 }
 
@@ -785,16 +804,56 @@ namespace Proselyte.Persistence
                 EditorSceneManager.MarkSceneDirty(scene);
             }
 
+            string curr_scene_guid = AssetDatabase.AssetPathToGUID(scene.path);
+            if(!string.IsNullOrEmpty(curr_scene_guid))
+            {
+                SceneIdData curr_scene_ID_data = null;
+                foreach(var sceneIdData in registry.sceneDataList)
+                {
+                    if(curr_scene_guid == sceneIdData.sceneGuid)
+                    {
+                        curr_scene_ID_data = sceneIdData;
+                        break;
+                    }
+                }
+
+                if(curr_scene_ID_data == null) return;
+
+                int orphanedIdsRemoved = 0;
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.AppendLine($"Removed Registered Orphaned IDs from Scene: {scene.name}");
+                for(int registeredIdIndex = curr_scene_ID_data.registeredIds.Count - 1;
+                    registeredIdIndex  >= 0; 
+                    registeredIdIndex --)
+                {
+                    var targetId = curr_scene_ID_data.registeredIds[registeredIdIndex];
+                    if(!openedScenePersistentIDs.Contains(targetId))
+                    {
+                        // Found mismatch between registry and opened scene persistent IDs,
+                        // remove orphaned ID from registry
+                        registry.UnregisterId(targetId);
+
+                        orphanedIdsRemoved++;
+                        sb.AppendLine($"Removed Registered ID: {targetId}");
+                    }
+                }
+
+                if(orphanedIdsRemoved > 0)
+                {
+                    sb.AppendLine($"Total Registered Ids removed due to ID orphaning: {orphanedIdsRemoved}");
+                    LogWarning(sb.ToString());
+                }
+            }
+
             LogDebug($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
         }
 
         public static void OnSceneClosing(Scene scene, bool removingScene)
         {
-            LogDebug("Editor Scene Closing.");
             var component_ids_to_remove = new List<int>();
 
             // NOTE(Jazz): Another big heavy scan, but only on scene closing in editor
-            foreach(var root in scene.GetRootGameObjects())  
+            foreach(var root in scene.GetRootGameObjects())
             {
                 var components = root.GetComponentsInChildren<MonoBehaviour>(true);
                 foreach(var comp in components)
@@ -806,16 +865,55 @@ namespace Proselyte.Persistence
                 }
             }
 
+            var sceneGuid = AssetDatabase.AssetPathToGUID(scene.path);
+            if(string.IsNullOrEmpty(sceneGuid)) LogDebug("Missing sceneGuid while closing scen in editor.");
+
             for(int componentIndex = component_ids_to_remove.Count - 1;
                 componentIndex >= 0;
                 componentIndex--)
             {
-                var curr_comp = component_ids_to_remove[componentIndex];
-                if(trackedComponentIds.trackedComponentIds.ContainsKey(curr_comp))
+                var curr_comp_instanceID = component_ids_to_remove[componentIndex];
+                if(trackedComponentIds.trackedComponentIds.ContainsKey(curr_comp_instanceID))
                 {
-                    trackedComponentIds.trackedComponentIds.Remove(curr_comp);
+                    trackedComponentIds.trackedComponentIds.Remove(curr_comp_instanceID);
+
+                    // NOTE(Jazz): Remove only unserialized registered IDs in dirtied scene, the scene has unserialized
+                    // Persistent Id values which need to be wiped from the registry.
+                    if(scene.isDirty)
+                    {
+                        var componentObj = EditorUtility.InstanceIDToObject(curr_comp_instanceID);
+                        if(componentObj == null) continue;
+                    
+                        var so = new SerializedObject(componentObj);
+                        SerializedProperty iterator = so.GetIterator();
+
+                        while(iterator.NextVisible(true))
+                        {
+                            if(!(iterator.propertyType == SerializedPropertyType.Generic &&
+                               iterator.type == nameof(PersistentId))) continue; // NAND
+                        
+                            var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                            if(!(idProp != null && idProp.uintValue != 0)) continue; // NAND
+                            
+                            // Valid persistentId property found
+                            // Compare against unsaved ids hashset for the scene
+                            if(PersistentIdManager.unsavedIds.TryGetValue(sceneGuid, out var unsavedSet) &&
+                                    unsavedSet.Contains(idProp.uintValue))
+                            {
+                                registry.UnregisterId(idProp.uintValue);
+                                unsavedSet.Remove(idProp.uintValue);
+                            }
+                        }
+                    }
                 }
             }
+        }
+
+        public static void OnSceneSaved(Scene savedScene)
+        {
+            string sceneGuid = AssetDatabase.AssetPathToGUID(savedScene.path);
+            PersistentIdManager.unsavedIds.Remove(sceneGuid);
+            LogDebug($"Scene saved: {savedScene.name}. Cleared unsaved persistent id tracking dictionary.");
         }
 
         private static 
@@ -1037,22 +1135,20 @@ namespace Proselyte.Persistence
 
                                     while(iterator.NextVisible(true) && idIndex < orderedIds.Count)
                                     {
-                                        if(iterator.propertyType == SerializedPropertyType.Generic &&
-                                            iterator.type == nameof(PersistentId))
-                                        {
-                                            var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
-                                            if(idProp != null && idProp.uintValue == 0)
-                                            {
-                                                uint restoredId = orderedIds[idIndex];
-                                                idProp.uintValue = restoredId;
-                                                hasChanges = true;
-                                                idIndex++;
+                                        if(!(iterator.propertyType == SerializedPropertyType.Generic &&
+                                            iterator.type == nameof(PersistentId))) continue; // NAND
 
-                                                if(!IsIdRegistered(restoredId))
-                                                {
-                                                    RegisterId(comp.gameObject, restoredId);
-                                                }
-                                            }
+                                        var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                                        if(!(idProp != null && idProp.uintValue == 0)) continue; // NAND
+                                        
+                                        uint restoredId = orderedIds[idIndex];
+                                        idProp.uintValue = restoredId;
+                                        hasChanges = true;
+                                        idIndex++;
+
+                                        if(!IsIdRegistered(restoredId))
+                                        {
+                                            RegisterId(comp.gameObject, restoredId);
                                         }
                                     }
 

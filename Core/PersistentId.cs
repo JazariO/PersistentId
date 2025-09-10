@@ -4,8 +4,6 @@ namespace Proselyte.Persistence
 {
     /// <summary>
     /// Editor-generated stable unique ID for game objects.
-    /// Does not inherit from MonoBehaviour - 
-    /// designed to be composed into a MonoBehaviour as an exposed property.
     /// </summary>
 
     [System.Serializable]
