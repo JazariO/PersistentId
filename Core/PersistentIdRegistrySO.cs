@@ -39,7 +39,7 @@ namespace Proselyte.Persistence
         {
             if(sceneIdRegistry == null)
             {
-                LogInfo("RegistrySO not initialized, initializing now.");
+                LogDebug("RegistrySO not initialized, initializing now.");
                 sceneIdRegistry = new Dictionary<string, HashSet<uint>>();
 
                 // Rebuild dictionary from serialized data
@@ -49,7 +49,7 @@ namespace Proselyte.Persistence
                         sceneIdRegistry[sceneData.sceneGuid] = new HashSet<uint>(sceneData.registeredIds);
                 }
 
-                LogInfo("Scenes discovered during dictionary rebuild: " + sceneDataList.Count);
+                LogDebug("Scenes discovered during dictionary rebuild: " + sceneDataList.Count);
             }
         }
 

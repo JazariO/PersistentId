@@ -23,7 +23,6 @@ namespace Proselyte.Persistence
         internal const string INITIALIZED_KEY = "com.proselyte.persistence.initialized";
         internal const string DEFAULT_REGISTRY_GUID = "com.proselyte.persistence.default_registry_guid";
         internal const string DEFAULT_REGISTRY_ASSET_PATH = "Assets/Settings/Persistent ID Registry SO.asset";
-        internal const string TEMP_CONST_PATH = "ProjectSettings/PersistentIdSettings.asset";
 
         // NOTE(Jazz): Tracks components by instanceId that contain PersistentIds, keeps a hashset of all unique PersistentId values.
         // Requires clearing on scene open/close in editor.
@@ -112,7 +111,7 @@ namespace Proselyte.Persistence
             }
 
             System.Text.StringBuilder sb = new();
-            sb.AppendLine($"---- Initializing Registry Scenes: {registry.RegisteredCount}----");
+            sb.AppendLine($"---- Initializing Registry Scenes: {registry.RegisteredSceneCount}----");
             foreach(var scene in registry.sceneDataList)
             {
                 sb.AppendLine("Scene found: " + AssetDatabase.GUIDToAssetPath(scene.sceneGuid));
@@ -247,9 +246,11 @@ namespace Proselyte.Persistence
             string directoryPath = Path.Combine(Application.dataPath, "../" +
                 PERSISTENCE_PROJECT_SETTINGS_PATH);
 
+
             string sessionStateKey = "sessionActive";
             bool sessionWasActive = SessionState.GetBool(sessionStateKey, false);
             bool newSession = !sessionWasActive;
+            LogDebug("New Session: " + newSession);
             if(newSession)
             {
                 LogDebug("New Session Detected. Setting up first time session variables.");
@@ -315,7 +316,7 @@ namespace Proselyte.Persistence
                     var wrapper = new TrackedComponentIdsWrapper();
                     string json = JsonUtility.ToJson(wrapper, true);
                     System.IO.File.WriteAllText(fullPath, json);
-                    LogDebug($"Created new JSON file at {fullPath}");
+                    Debug.Log($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
                 }
                 catch(System.Exception ex)
                 {
@@ -324,59 +325,7 @@ namespace Proselyte.Persistence
                 }
             }
 
-            #region Read Tracked Data from JSON
-            if(System.IO.File.Exists(fullPath))
-            {
-                LogDebug("Tracked Components JSON found during Read Op!");
-
-                try
-                {
-                    string json = System.IO.File.ReadAllText(fullPath);
-                    var wrapper = JsonUtility.FromJson<TrackedComponentIdsWrapper>(json);
-
-                    if(wrapper != null)
-                    {
-                        trackedComponentIds ??= new TrackedComponentIds();
-
-                        foreach(var entry in wrapper.trackedComponentEntries)
-                        {
-                            trackedComponentIds.trackedComponentIds[entry.instanceId] =
-                                new HashSet<uint>(entry.persistentIds);
-                        }
-                    }
-                    else
-                    {
-                        LogWarning($"Failed to deserialize wrapper. Creating empty dictionary.");
-                        trackedComponentIds.trackedComponentIds.Clear();
-                    }
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Error reading from {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
-                    trackedComponentIds.trackedComponentIds.Clear();
-                }
-            }
-            else
-            {
-                LogWarning($"{nameof(TrackedComponentIds)} not found in project. " +
-                    $"Creating new {nameof(TrackedComponentIds)} at: " + fullPath);
-
-                if(!Directory.Exists(directoryPath))
-                    Directory.CreateDirectory(directoryPath);
-
-                try
-                {
-                    var wrapper = new TrackedComponentIdsWrapper();
-                    string json = JsonUtility.ToJson(wrapper, true);
-                    System.IO.File.WriteAllText(fullPath, json);
-                    LogDebug($"Created new JSON file at {fullPath}");
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Failed to write to {fullPath}: {ex.Message}");
-                }
-            }
-            #endregion Read Tracked Data from JSON
+            ReadTrackedIdDataFromJSON();
 
             if(trackedComponentIds?.trackedComponentIds == null || trackedComponentIds.trackedComponentIds.Count == 0)
             {
@@ -527,6 +476,67 @@ namespace Proselyte.Persistence
             registry.ValidateRegistry();
         }
 
+        private static void ReadTrackedIdDataFromJSON()
+        {
+            string fullPath = Path.Combine(Application.dataPath, "../" +
+                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+            string directoryPath = Path.Combine(Application.dataPath, "../" +
+                PERSISTENCE_PROJECT_SETTINGS_PATH);
+
+            if(System.IO.File.Exists(fullPath))
+            {
+                LogDebug("Tracked Components JSON found during Read Op!");
+
+                try
+                {
+                    string json = System.IO.File.ReadAllText(fullPath);
+                    var wrapper = JsonUtility.FromJson<TrackedComponentIdsWrapper>(json);
+
+                    if(wrapper != null)
+                    {
+                        trackedComponentIds ??= new TrackedComponentIds();
+
+                        foreach(var entry in wrapper.trackedComponentEntries)
+                        {
+                            trackedComponentIds.trackedComponentIds[entry.instanceId] =
+                                new HashSet<uint>(entry.persistentIds);
+                        }
+                    }
+                    else
+                    {
+                        LogWarning($"Failed to deserialize wrapper. Creating empty dictionary.");
+                        trackedComponentIds.trackedComponentIds.Clear();
+                    }
+                }
+                catch(System.Exception ex)
+                {
+                    LogError($"Error reading from {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
+                    trackedComponentIds.trackedComponentIds.Clear();
+                }
+            }
+            else
+            {
+                LogWarning($"{nameof(TrackedComponentIds)} not found in project. " +
+                    $"Creating new {nameof(TrackedComponentIds)} at: " + fullPath);
+
+                if(!Directory.Exists(directoryPath))
+                    Directory.CreateDirectory(directoryPath);
+
+                try
+                {
+                    var wrapper = new TrackedComponentIdsWrapper();
+                    string json = JsonUtility.ToJson(wrapper, true);
+                    System.IO.File.WriteAllText(fullPath, json);
+                    Debug.Log($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
+                }
+                catch(System.Exception ex)
+                {
+                    LogError($"Failed to write to {fullPath}: {ex.Message}");
+                }
+            }
+        }
+
+
         private static void SubscribeToCallbacks()
         {
             ObjectChangeEvents.changesPublished -= OnObjectChangesPublished;
@@ -563,6 +573,7 @@ namespace Proselyte.Persistence
         private static void OnBeforeAssemblyReload()
         {
             LogDebug("Before Domain Reload.");
+            PrintTrackedComponentIds();
 
             // Get scene dirty state before assembly reload
             for(int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++)
@@ -575,7 +586,7 @@ namespace Proselyte.Persistence
 
             // Write the tracked components ids to ../ProjectSettings and overwrite its value
             // with the current trackedComponentsIds dictionary
-            { 
+            {
                 string fullPath = Path.Combine(Application.dataPath, "../" + 
                     PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
                 LogDebug("Writing tracked component ids data to JSON file at: " + fullPath);
@@ -597,7 +608,7 @@ namespace Proselyte.Persistence
 
                     string json = JsonUtility.ToJson(wrapper, true);
                     System.IO.File.WriteAllText(fullPath, json);
-                    LogDebug($"Updated JSON file at {fullPath}");
+                    Debug.Log($"[PersistentId] Updated JSON at {fullPath} with data being saved: {json}");
                 }
                 catch(System.Exception ex)
                 {
@@ -609,7 +620,7 @@ namespace Proselyte.Persistence
             sb.AppendLine("---- Tracked Component Ids Before Domain Reload ----");
             foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
             {
-                sb.Append($"Instance Id: {trackedComponent.Key.ToString()}, {nameof(PersistentId)}: ");
+                sb.Append($"Instance Id: {trackedComponent.Key}, {nameof(PersistentId)}: ");
                 foreach(var persistentId in trackedComponent.Value)
                 {
                     sb.Append($"0x{persistentId:X8}, ");
@@ -622,8 +633,15 @@ namespace Proselyte.Persistence
         private static void OnAfterAssemblyReload()
         {
             LogDebug("After Domain Reload: performing ");
+            //var gos = GameObject.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+            //var sb = new System.Text.StringBuilder();
+            //foreach(var g in gos)
+            //{
+            //    sb.AppendLine($"InstanceID Found: {g.GetInstanceID()}");
+            //}
+            //LogDebug(sb.ToString());
 
-
+            //PrintTrackedComponentJson("OnAfterAssemblyReload");
         }
 
         private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
@@ -1214,7 +1232,7 @@ namespace Proselyte.Persistence
         #region Scene Operations
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            LogDebug("Editor Scene Opened.");
+            LogDebug("Editor Scene Opened Beginning. Tracked Component Count: " + trackedComponentIds.trackedComponentIds.Count);
 
             string sceneGuid = AssetDatabase.GUIDFromAssetPath(scene.path).ToString();
             sceneCleanState[sceneGuid] = true;
@@ -1326,6 +1344,7 @@ namespace Proselyte.Persistence
                 }
             }
 
+
             if(sceneModified)
             {
                 EditorSceneManager.MarkSceneDirty(scene); // NOTE(Jazz): May not be required for undoing to clean scene
@@ -1373,6 +1392,7 @@ namespace Proselyte.Persistence
             }
 
             LogDebug($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
+            LogDebug("Editor Scene Opened Completed. Tracked Component Count: " + trackedComponentIds.trackedComponentIds.Count);
         }
 
         public static void OnSceneClosing(Scene scene, bool removingScene)
@@ -1829,14 +1849,14 @@ namespace Proselyte.Persistence
 
         // TODO(Jazz): Remove for release
         #region Debugging Operations
-        [MenuItem("Tools/Persistent Id/Reset Registry Setup", false, 2)]
-        private static void ResetRegistrySetup()
+        [MenuItem("Tools/Persistent Id/RESET Registry Setup Key", false, 2)]
+        private static void ResetRegistrySetupKey()
         {
             EditorPrefs.SetBool(INITIALIZED_KEY, false);
         }
 
-        [MenuItem("Tools/Persistent Id/Print Registry Setup Bool", false, 2)]
-        private static void PrintRegistryBool()
+        [MenuItem("Tools/Persistent Id/PRINT Registry Setup Key", false, 2)]
+        private static void PrintRegistryKey()
         {
             LogDebug("initialized registry installation key: " + EditorPrefs.GetBool(INITIALIZED_KEY, false));
         }
@@ -1861,20 +1881,31 @@ namespace Proselyte.Persistence
         [MenuItem("Tools/Persistent Id/Remove Tracked Component Ids")]
         private static void RemoveTrackedComponentIds()
         {
+            // Clear in-memory data
             trackedComponentIds.trackedComponentIds.Clear();
+            processedComponentsThisDomainCycle.Clear();
+
+            // Also clear the persistent JSON file
+            string fullPath = Path.Combine(Application.dataPath, "../" +
+                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
+
+            try
+            {
+                if(File.Exists(fullPath))
+                {
+                    File.Delete(fullPath);
+                    LogDebug($"Deleted tracking JSON file at {fullPath}");
+                }
+            }
+            catch(System.Exception ex)
+            {
+                LogError($"Failed to clear tracking JSON file: {ex.Message}");
+            }
+
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Cleared Tracked Component Ids ----");
-            foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
-            {
-                sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
-                foreach(var persistentId in trackedComponent.Value)
-                {
-                    sb.Append($"{persistentId.ToString()}, ");
-                }
-                sb.Append("\n");
-            }
+            sb.AppendLine("No tracked components remaining.");
             LogDebug(sb.ToString());
-            processedComponentsThisDomainCycle.Clear();
         }
 
         [MenuItem("Tools/Persistent Id/Print Processed Component Ids", false, 0)]

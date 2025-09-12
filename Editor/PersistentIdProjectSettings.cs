@@ -10,24 +10,25 @@ namespace Proselyte.Persistence
     // Data Layer - Scriptable Singleton
     [System.Serializable]
     [InitializeOnLoad]
-    [FilePath(PERSISTENCE_PROJECT_SETTINGS_PATH + PROJECT_SETTINGS_ASSET_FILE_NAME, FilePathAttribute.Location.ProjectFolder)]
+    [FilePath(PERSISTENCE_PROJECT_SETTINGS_PATH + "/" + PROJECT_SETTINGS_ASSET_FILE_NAME, FilePathAttribute.Location.ProjectFolder)]
     public class PersistentIdProjectSettings : ScriptableSingleton<PersistentIdProjectSettings>
     {
-        void OnEnable()
-        {
-            LogDebug("On Enable Persistent Id Project Settings. [Creating Path]");
-            string fullPath = Path.Combine(Application.dataPath, "../" + PERSISTENCE_PROJECT_SETTINGS_PATH);
-            if(!Directory.Exists(fullPath))
-            {
-                Directory.CreateDirectory(fullPath);
-            }
-        }
-
         [SerializeField]
         public PersistentIdRegistrySO registry;
 
         [SerializeField]
         public PersistentIdLogger.LogSeverity logSeverity = PersistentIdLogger.LogSeverity.Warning;
+
+        void OnEnable()
+        {
+            Debug.Log("On Enable Persistent Id Project Settings. [Creating Path]");
+            string fullPath = Path.Combine(Application.dataPath, "../" + PERSISTENCE_PROJECT_SETTINGS_PATH);
+            if(!Directory.Exists(fullPath))
+            {
+                LogDebug("On Enable Project Settings Creating missing directory at: " + fullPath);
+                Directory.CreateDirectory(fullPath);
+            }
+        }
 
         public void ApplyLoggingSettings()
         {

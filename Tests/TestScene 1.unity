@@ -150,6 +150,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   persistentId:
     id: 4145840892
+  persistentId2:
+    id: 4225396778
   score: 0
   playerName: Player
   savedPosition: {x: 0, y: 0, z: 0}
@@ -457,6 +459,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   persistentId:
     id: 786413950
+  persistentId2:
+    id: 1147108543
   score: 0
   playerName: Player
   savedPosition: {x: 0, y: 0, z: 0}
@@ -520,7 +524,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   persistentId:
-    id: 3059964719
+    id: 3277176897
+  persistentId2:
+    id: 3364376346
   score: 0
   playerName: Player
   savedPosition: {x: 0, y: 0, z: 0}
