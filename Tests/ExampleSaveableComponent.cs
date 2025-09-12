@@ -8,9 +8,6 @@ public class ExampleSaveableComponent : MonoBehaviour
     [SerializeField] private PersistentId persistentId;
     //[SerializeField] private PersistentId persistentId2;
 
-
-
-
     [Header("Saveable Data")]
     [SerializeField] private int score = 0;
     [SerializeField] private string playerName = "Player";
