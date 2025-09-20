@@ -21,7 +21,7 @@ namespace Proselyte.Persistence
 
         void OnEnable()
         {
-            Debug.Log("On Enable Persistent Id Project Settings. [Creating Path]");
+            LogDebug("On Enable Persistent Id Project Settings. [Creating Path]");
             string fullPath = Path.Combine(Application.dataPath, "../" + PERSISTENCE_PROJECT_SETTINGS_PATH);
             if(!Directory.Exists(fullPath))
             {

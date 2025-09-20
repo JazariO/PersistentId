@@ -300,7 +300,7 @@ namespace Proselyte.Persistence
                     var wrapper = new TrackedComponentIdsWrapper();
                     string json = JsonUtility.ToJson(wrapper, true);
                     System.IO.File.WriteAllText(fullPath, json);
-                    Debug.Log($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
+                    LogDebug($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
                 }
                 catch(System.Exception ex)
                 {
@@ -592,7 +592,7 @@ namespace Proselyte.Persistence
 
                     string json = JsonUtility.ToJson(wrapper, true);
                     System.IO.File.WriteAllText(fullPath, json);
-                    Debug.Log($"[PersistentId] Updated JSON at {fullPath} with data being saved: {json}");
+                    LogDebug($"[PersistentId] Updated JSON at {fullPath} with data being saved: {json}");
                 }
                 catch(System.Exception ex)
                 {
