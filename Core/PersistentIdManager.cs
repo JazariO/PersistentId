@@ -1679,7 +1679,7 @@ namespace Proselyte.Persistence
 
         private static void ProcessComponentForPersistentIds(MonoBehaviour component)
         {
-            Debug.Log("ProcessComponentForPersistentIds");
+            LogDebug("ProcessComponentForPersistentIds");
             if(component == null) return;
 
             var componentInstanceId = component.GetInstanceID();
