@@ -10,7 +10,7 @@ using static Proselyte.Persistence.PersistentIdLogger;
 namespace Proselyte.Persistence
 {
     /// <summary>
-    /// Scriptable Object that maintains a registry of all registered persistent IDs.
+    /// Scriptable Object that maintains a serialized registry of all registered persistent IDs.
     /// Serves as the single source of truth for ID uniqueness validation.
     /// </summary>
     [CreateAssetMenu(fileName = "PersistentIdRegistry", menuName = "System/PersistentId Registry")]
@@ -129,25 +129,6 @@ namespace Proselyte.Persistence
             sceneIdRegistry[sceneGuid].Add(id);
             UpdateSerializedData();
 
-            // Get scene reference
-            var scenePath = AssetDatabase.GUIDToAssetPath(sceneGuid);
-            var scene = EditorSceneManager.GetSceneByPath(scenePath);
-            if(scene == null)
-            {
-                LogError($"Scene not found at path {scenePath} while using the editor.");
-            }
-
-            // track unsavedIds
-            if(scene.isDirty)
-            {
-                if(!PersistentIdManager.unsavedIds.TryGetValue(sceneGuid, out var idSet))
-                {
-                    idSet = new HashSet<uint>();
-                    PersistentIdManager.unsavedIds[sceneGuid] = idSet;
-                }
-                idSet.Add(id);
-            }
-
             return true;
         }
 
@@ -223,15 +204,6 @@ namespace Proselyte.Persistence
             }
         }
 
-        public IEnumerable<uint> RegisteredIds
-        {
-            get
-            {
-                InitializeRegistry();
-                return sceneIdRegistry.Values.SelectMany(hashSet => hashSet);
-            }
-        }
-
         public int RegisteredSceneCount
         {
             get
@@ -239,20 +211,6 @@ namespace Proselyte.Persistence
                 InitializeRegistry();
                 return sceneIdRegistry.Count;
             }
-        }
-
-        private IReadOnlyCollection<uint> GetSceneIds(string sceneGuid)
-        {
-            InitializeRegistry();
-            return sceneIdRegistry.ContainsKey(sceneGuid)
-                ? sceneIdRegistry[sceneGuid]
-                : new HashSet<uint>();
-        }
-
-        private IReadOnlyCollection<string> GetRegisteredScenes()
-        {
-            InitializeRegistry();
-            return sceneIdRegistry.Keys;
         }
 
         /// <summary>

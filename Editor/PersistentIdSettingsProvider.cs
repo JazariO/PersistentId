@@ -70,8 +70,8 @@ namespace Proselyte.Persistence
                             if(m_RegistryProperty.objectReferenceValue != null)
                                 PersistentIdProjectSettings.instance.SaveRegistryRef();
                             
-                            // Reinitialize the manager with new registry and cleared tracking data
-                            PersistentIdManager.ClearTrackingData();
+                            // Reinitialize the registrar with new registry and cleared tracking data
+                            PersistentIdRegistrar.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
 
                             LogInfo($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");

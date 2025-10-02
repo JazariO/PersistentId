@@ -6,7 +6,7 @@ public class ExampleSaveableComponent : MonoBehaviour
 {
     [Header("Persistent Identification")]
     [SerializeField] private PersistentId persistentId;
-    //[SerializeField] private PersistentId persistentId2;
+    [SerializeField] private PersistentId persistentId2;
 
 
 

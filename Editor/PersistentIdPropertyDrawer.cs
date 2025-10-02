@@ -90,7 +90,7 @@ namespace Proselyte.Persistence
                     "Regenerate",
                     "Cancel"))
                 {
-                    PersistentIdManager.RegenerateId(property);
+                    PersistentIdRegistrar.RegenerateId(property);
                 }
             });
 

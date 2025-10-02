@@ -5,73 +5,42 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
 using System.Linq;
-using System.IO;
 using static Proselyte.Persistence.PersistentIdLogger;
 using static Proselyte.Persistence.PersistentIdRegistrySO;
 
 namespace Proselyte.Persistence
 {
-    public static class PersistentIdManager
+    /// <summary>
+    /// Registrar of persistent IDs.
+    /// Ensures ids are correctly registered with the registry and validated to avoid collisions during editor-time.
+    /// </summary>
+    public static class PersistentIdRegistrar
     {
         private static PersistentIdRegistrySO registry;
+        private static PersistentIdRegistrarData registrar_data;
 
-        internal const string PERSISTENCE_PROJECT_SETTINGS_PATH = "ProjectSettings/Packages/com.proselyte.persistence";
-        internal const string TRACKED_COMPONENT_IDS_JSON_FILE_NAME = "PersistentIdTrackedComponents.json";
         internal const string PROJECT_SETTINGS_ASSET_FILE_NAME = "PersistentIdSettings.asset";
+        internal const string PERSISTENCE_PROJECT_SETTINGS_PATH = "ProjectSettings/Packages/com.proselyte.persistence";
 
         internal const string INITIALIZED_KEY = "com.proselyte.persistence.initialized";
         internal const string DEFAULT_REGISTRY_GUID = "com.proselyte.persistence.default_registry_guid";
         internal const string DEFAULT_REGISTRY_ASSET_PATH = "Assets/Settings/Persistent ID Registry SO.asset";
 
-        // NOTE(Jazz): Tracks components by instanceId that contain PersistentIds, keeps a hashset of all unique PersistentId values.
-        // Requires clearing on scene open/close in editor.
-        private static TrackedComponentIds trackedComponentIds = new();
-
-        // NOTE(Jazz): This acts purely as a speed boost to component processing as an early-out guard
-        // to avoid reprocessing components. Will be cleared with each domain reload.
-        private static HashSet<int> processedComponentsThisDomainCycle = new();
-
-        internal static Dictionary<string, HashSet<uint>> unsavedIds = new();
-        private static Dictionary<string, bool> sceneDirtyState = new();
-
         public static void ClearTrackingData()
         {
-            // Clear the in-memory tracked component IDs
-            trackedComponentIds.trackedComponentIds.Clear();
-            processedComponentsThisDomainCycle.Clear();
-
-            // Construct the full path to the tracking JSON file
-            string fullPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-
-            // Delete the JSON file if it exists
-            try
-            {
-                if(File.Exists(fullPath))
-                {
-                    File.Delete(fullPath);
-                    LogDebug($"Deleted tracking file at {fullPath}");
-                }
-                else
-                {
-                    LogDebug("No tracking file found to delete.");
-                }
-            }
-            catch(System.Exception ex)
-            {
-                LogError($"Error - Failed to delete tracking file at {fullPath}: {ex.Message}");
-            }
+            // Clear the transient RegistrarData
+            registrar_data.ClearAll();
 
             // Clear session state
             SessionState.SetBool("sessionActive", false);
 
-            LogDebug("PersistentIdManager tracking data cleared.");
+            LogDebug($"{nameof(PersistentIdRegistrar)} tracking data cleared.");
         }
 
         [UnityEditor.InitializeOnLoadMethod]
         public static void Initialize()
         {
-            LogDebug("[PersistentIdManager] Initialize()");
+            LogDebug($"[{nameof(PersistentIdRegistrar)}] Initialize()");
             
             if(Application.isPlaying)
             {
@@ -82,6 +51,9 @@ namespace Proselyte.Persistence
             {
                 LogDebug("Editor is not in play mode!");
             }
+
+            // Set static registrarinstance variable
+            registrar_data = PersistentIdRegistrarData.instance;
 
             // TODO(Jazz): Add better sentinel initialization tracking using package version as key
             if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
@@ -117,7 +89,7 @@ namespace Proselyte.Persistence
             }
             LogDebug(sb.ToString());
 
-            LogDebug($"[{nameof(PersistentIdManager)}] Initializing()");
+            LogDebug($"[{nameof(PersistentIdRegistrar)}] Initializing()");
 
             EditorApplication.playModeStateChanged -= OnPlaymodeChanged;
             EditorApplication.playModeStateChanged += OnPlaymodeChanged;
@@ -232,19 +204,12 @@ namespace Proselyte.Persistence
             }
             if(registry == null)
             {
-                LogWarning($"[{nameof(PersistentIdManager)}] Registry not set. Skipping delay call initialization.");
+                LogWarning($"[{nameof(PersistentIdRegistrar)}] Registry not set. Skipping delay call initialization.");
                 return;
             }
 
             LogDebug("Editor Application Delay Call");
             SubscribeToCallbacks();
-
-            // find or create trackedComponentId settings file from ../ProjectSettings directory
-            string fullPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-            string directoryPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH);
-
 
             string sessionStateKey = "sessionActive";
             bool sessionWasActive = SessionState.GetBool(sessionStateKey, false);
@@ -258,7 +223,6 @@ namespace Proselyte.Persistence
                 // Clean up orphaned scenes from registry (scenes that no longer exist in project)
                 if(registry != null)
                 {
-                    // Init registry
                     registry.InitializeRegistry();
 
                     var scenesToRemove = new List<string>();
@@ -291,30 +255,11 @@ namespace Proselyte.Persistence
                     var scene = EditorSceneManager.GetSceneAt(sceneIndex);
                     OnSceneOpened(scene, OpenSceneMode.Additive);
                 }
-
-                if(!Directory.Exists(directoryPath))
-                    Directory.CreateDirectory(directoryPath);
-
-                try
-                {
-                    var wrapper = new TrackedComponentIdsWrapper();
-                    string json = JsonUtility.ToJson(wrapper, true);
-                    System.IO.File.WriteAllText(fullPath, json);
-                    LogDebug($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Failed to write to {fullPath}: {ex.Message}");
-                    // TODO(Jazz): Handle system recovery when file writing fails.
-                }
             }
 
-            // read tracked component id data from before domain reload
-            ReadTrackedComponentIdDataFromJSON();
-
-            if(trackedComponentIds?.trackedComponentIds == null || trackedComponentIds.trackedComponentIds.Count == 0)
+            if(registrar_data.trackedComponentIds == null || registrar_data.trackedComponentIds.Count == 0)
             {
-                LogDebug("No tracked components found after loading from JSON.");
+                LogDebug("No tracked components found after loading from RegistrarData.");
                 return;
             }
 
@@ -332,14 +277,20 @@ namespace Proselyte.Persistence
             // compare these to the tracked component ids to discover removed properties.
             HashSet<uint> foundIds = new();
             HashSet<uint> addedIds = new();
+            List<int> componentsToRemove = new();
 
             // Loop through all tracked objects to reprocess all persistent id values
-            foreach(var tracked_comp_kvp in trackedComponentIds.trackedComponentIds)
+            foreach(var tracked_comp_kvp in registrar_data.trackedComponentIds)
             {
                 var target_component = EditorUtility.InstanceIDToObject(tracked_comp_kvp.Key) as MonoBehaviour;
-                if(target_component == null) continue;
+                if(target_component == null)
+                {
+                    // Component no longer exists - mark for removal
+                    componentsToRemove.Add(tracked_comp_kvp.Key);
+                    continue;
+                }
 
-                var so = new SerializedObject(target_component);
+                    var so = new SerializedObject(target_component);
                 var iterator = so.GetIterator();
 
                 // Clear addedIds for this component
@@ -368,7 +319,7 @@ namespace Proselyte.Persistence
                         // This field has no ID assigned - generate one
                         var uniquePersistentId = GenerateUniqueId();
                         idProp.uintValue = uniquePersistentId;
-                        so.ApplyModifiedProperties();
+                        so.ApplyModifiedPropertiesWithoutUndo();
                         addedIds.Add(uniquePersistentId);
                         currentComponentIds.Add(uniquePersistentId);
                         foundIds.Add(uniquePersistentId);
@@ -383,7 +334,7 @@ namespace Proselyte.Persistence
                             // ID is already registered elsewhere - generate new one to avoid collision
                             var uniquePersistentId = GenerateUniqueId();
                             idProp.uintValue = uniquePersistentId;
-                            so.ApplyModifiedProperties();
+                            so.ApplyModifiedPropertiesWithoutUndo();
                             addedIds.Add(uniquePersistentId);
                             currentComponentIds.Remove(target_id); // Remove old
                             currentComponentIds.Add(uniquePersistentId); // Add new
@@ -429,7 +380,7 @@ namespace Proselyte.Persistence
                 for(int removalIndex = idsToRemove.Count - 1; removalIndex >= 0; removalIndex--)
                 {
                     uint curr_id = idsToRemove[removalIndex];
-                    trackedComponentIds.trackedComponentIds[tracked_comp_kvp.Key].Remove(curr_id);
+                    registrar_data.trackedComponentIds[tracked_comp_kvp.Key].Remove(curr_id);
                     UnregisterId(curr_id);
                     LogDebug($"Removed deleted {nameof(PersistentId)}: 0x{curr_id:X8}");
                 }
@@ -437,16 +388,36 @@ namespace Proselyte.Persistence
                 // Track added properties
                 foreach(var idToAdd in addedIds)
                 {
-                    if(!trackedComponentIds.trackedComponentIds.ContainsKey(tracked_comp_kvp.Key))
-                        trackedComponentIds.trackedComponentIds[tracked_comp_kvp.Key] = new HashSet<uint>();
+                    if(!registrar_data.trackedComponentIds.ContainsKey(tracked_comp_kvp.Key))
+                        registrar_data.trackedComponentIds[tracked_comp_kvp.Key] = new HashSet<uint>();
 
-                    trackedComponentIds.trackedComponentIds[tracked_comp_kvp.Key].Add(idToAdd);
+                    registrar_data.trackedComponentIds[tracked_comp_kvp.Key].Add(idToAdd);
                 }
+            }
+
+            // Clean up tracked components that no longer exist
+            foreach(var componentId in componentsToRemove)
+            {
+                if(registrar_data.trackedComponentIds.TryGetValue(componentId, out var ids))
+                {
+                    foreach(var id in ids)
+                    {
+                        // Only unregister if not used elsewhere
+                        if(!IsIdCurrentlyInUseInScene(id))
+                        {
+                            UnregisterId(id);
+                            LogDebug($"Unregistered orphaned {nameof(PersistentId)}: 0x{id:X8}");
+                        }
+                    }
+                }
+                registrar_data.trackedComponentIds.Remove(componentId);
+                registrar_data.processedComponentsThisDomainCycle.Remove(componentId);
+                LogDebug($"Removed orphaned component tracking for instanceId: {componentId}");
             }
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids After Delayed Editor Call ----");
-            foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
+            foreach(var trackedComponent in registrar_data.trackedComponentIds)
             {
                 sb.Append($"Instance Id: {trackedComponent.Key.ToString()}, {nameof(PersistentId)}: ");
                 foreach(var persistentId in trackedComponent.Value)
@@ -459,67 +430,6 @@ namespace Proselyte.Persistence
 
             registry.ValidateRegistry();
         }
-
-        private static void ReadTrackedComponentIdDataFromJSON()
-        {
-            string fullPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-            string directoryPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH);
-
-            if(System.IO.File.Exists(fullPath))
-            {
-                LogDebug("Tracked Components JSON found during Read Op!");
-
-                try
-                {
-                    string json = System.IO.File.ReadAllText(fullPath);
-                    var wrapper = JsonUtility.FromJson<TrackedComponentIdsWrapper>(json);
-
-                    if(wrapper != null)
-                    {
-                        trackedComponentIds ??= new TrackedComponentIds();
-
-                        foreach(var entry in wrapper.trackedComponentEntries)
-                        {
-                            trackedComponentIds.trackedComponentIds[entry.instanceId] =
-                                new HashSet<uint>(entry.persistentIds);
-                        }
-                    }
-                    else
-                    {
-                        LogWarning($"Failed to deserialize wrapper. Creating empty dictionary.");
-                        trackedComponentIds.trackedComponentIds.Clear();
-                    }
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Error reading from {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
-                    trackedComponentIds.trackedComponentIds.Clear();
-                }
-            }
-            else
-            {
-                LogWarning($"{nameof(TrackedComponentIds)} not found in project. " +
-                    $"Creating new {nameof(TrackedComponentIds)} at: " + fullPath);
-
-                if(!Directory.Exists(directoryPath))
-                    Directory.CreateDirectory(directoryPath);
-
-                try
-                {
-                    var wrapper = new TrackedComponentIdsWrapper();
-                    string json = JsonUtility.ToJson(wrapper, true);
-                    System.IO.File.WriteAllText(fullPath, json);
-                    Debug.Log($"[PersistentId] Created new JSON at {fullPath} with data being saved: {json}");
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Failed to write to {fullPath}: {ex.Message}");
-                }
-            }
-        }
-
 
         private static void SubscribeToCallbacks()
         {
@@ -537,8 +447,6 @@ namespace Proselyte.Persistence
             EditorSceneManager.sceneClosing += OnSceneClosing;
             EditorSceneManager.sceneSaved -= OnSceneSaved;
             EditorSceneManager.sceneSaved += OnSceneSaved;
-            EditorSceneManager.sceneDirtied -= OnSceneDirtied;
-            EditorSceneManager.sceneDirtied += OnSceneDirtied;
         }
 
         private static void UnsubscribeToCallbacks()
@@ -551,7 +459,6 @@ namespace Proselyte.Persistence
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneClosing -= OnSceneClosing;
             EditorSceneManager.sceneSaved-= OnSceneSaved;
-            EditorSceneManager.sceneDirtied -= OnSceneDirtied;
         }
 
         private static void OnBeforeAssemblyReload()
@@ -559,50 +466,11 @@ namespace Proselyte.Persistence
             LogDebug("Before Domain Reload.");
             PrintTrackedComponentIds();
 
-            // Get scene dirty state before assembly reload
-            for(int sceneIndex = 0; sceneIndex < SceneManager.sceneCount; sceneIndex++)
-            {
-                var curr_scene = SceneManager.GetSceneAt(sceneIndex);
-                var curr_scene_guid = AssetDatabase.AssetPathToGUID(curr_scene.path).ToString();
-
-                sceneDirtyState[curr_scene_guid] = curr_scene.isDirty;
-            }
-
-            // Write the tracked components ids to ../ProjectSettings and overwrite its value
-            // with the current trackedComponentsIds dictionary
-            {
-                string fullPath = Path.Combine(Application.dataPath, "../" + 
-                    PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-                LogDebug("Writing tracked component ids data to JSON file at: " + fullPath);
-
-                // create settings json file if it doesn't exist
-                trackedComponentIds ??= new TrackedComponentIds();
-
-                try
-                {
-                    var wrapper = new TrackedComponentIdsWrapper();
-                    foreach(var kvp in trackedComponentIds.trackedComponentIds)
-                    {
-                        wrapper.trackedComponentEntries.Add(new TrackedComponentEntry
-                        {
-                            instanceId = kvp.Key,
-                            persistentIds = new List<uint>(kvp.Value)
-                        });
-                    }
-
-                    string json = JsonUtility.ToJson(wrapper, true);
-                    System.IO.File.WriteAllText(fullPath, json);
-                    LogDebug($"[PersistentId] Updated JSON at {fullPath} with data being saved: {json}");
-                }
-                catch(System.Exception ex)
-                {
-                    LogError($"Error writing to {TRACKED_COMPONENT_IDS_JSON_FILE_NAME}: {ex.Message}");
-                }
-            }
+            registrar_data.ForceSaveRegistrarData();
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids Before Domain Reload ----");
-            foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
+            foreach(var trackedComponent in registrar_data.trackedComponentIds)
             {
                 sb.Append($"Instance Id: {trackedComponent.Key}, {nameof(PersistentId)}: ");
                 foreach(var persistentId in trackedComponent.Value)
@@ -632,7 +500,7 @@ namespace Proselyte.Persistence
         {
             if(registry == null)
             {
-                LogWarning($"[{nameof(PersistentIdManager)}] Registry not set. Skipping object change processing.");
+                LogWarning($"[{nameof(PersistentIdRegistrar)}] Registry not set. Skipping object change processing.");
                 return;
             }
 
@@ -654,7 +522,7 @@ namespace Proselyte.Persistence
                                 if(comp != null)
                                 {
                                     var componentInstanceId = comp.GetInstanceID();
-                                    if(!processedComponentsThisDomainCycle.Contains(componentInstanceId))
+                                    if(!registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId))
                                     {
                                         ProcessComponentForPersistentIds(comp);
                                     }
@@ -664,7 +532,7 @@ namespace Proselyte.Persistence
                         else if(obj is Component comp && comp is MonoBehaviour monoBehaviour)
                         {
                             var componentInstanceId = monoBehaviour.GetInstanceID();
-                            if(!processedComponentsThisDomainCycle.Contains(componentInstanceId))
+                            if(!registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId))
                             {
                                 ProcessComponentForPersistentIds(monoBehaviour);
                             }
@@ -682,7 +550,7 @@ namespace Proselyte.Persistence
                         HashSet<int> componentIdsToCleanup = new();
 
                         // Cross examine tracked components to determine which component instance IDs are dangling
-                        foreach(int componentInstanceId in trackedComponentIds.trackedComponentIds.Keys)
+                        foreach(int componentInstanceId in registrar_data.trackedComponentIds.Keys)
                         {
                             UnityEngine.Object trackedObj = EditorUtility.InstanceIDToObject(componentInstanceId);
                             if(trackedObj == null)
@@ -695,16 +563,16 @@ namespace Proselyte.Persistence
                         var allTrackedIds = new HashSet<uint>();
                         foreach(var componentInstanceId in componentIdsToCleanup)
                         {
-                            if(trackedComponentIds.trackedComponentIds.TryGetValue(componentInstanceId, out var trackedIds))
+                            if(registrar_data.trackedComponentIds.TryGetValue(componentInstanceId, out var trackedIds))
                             {
                                 foreach(var id in trackedIds)
                                 {
                                     allTrackedIds.Add(id);
                                 }
-                                trackedComponentIds.trackedComponentIds.Remove(componentInstanceId);
+                                registrar_data.trackedComponentIds.Remove(componentInstanceId);
                                 LogDebug($"Removed componentInstanceId {componentInstanceId} from tracking");
                             }
-                            processedComponentsThisDomainCycle.Remove(componentInstanceId);
+                            registrar_data.processedComponentsThisDomainCycle.Remove(componentInstanceId);
                         }
 
                         LogDebug($"Found {allTrackedIds.Count} tracked IDs from {componentIdsToCleanup.Count} components to clean up");
@@ -756,8 +624,8 @@ namespace Proselyte.Persistence
                                 var componentInstanceId = comp.GetInstanceID();
 
                                 // Check if this component had tracked IDs before this change event
-                                bool hadTrackedIds = trackedComponentIds.trackedComponentIds.ContainsKey(componentInstanceId);
-                                var previouslyTrackedIds = hadTrackedIds ? new HashSet<uint>(trackedComponentIds.trackedComponentIds[componentInstanceId]) : new HashSet<uint>();
+                                bool hadTrackedIds = registrar_data.trackedComponentIds.ContainsKey(componentInstanceId);
+                                var previouslyTrackedIds = hadTrackedIds ? new HashSet<uint>(registrar_data.trackedComponentIds[componentInstanceId]) : new HashSet<uint>();
 
                                 // Check current state of the component
                                 var currentIds = new HashSet<uint>();
@@ -798,7 +666,7 @@ namespace Proselyte.Persistence
 
                                     if(hasChanges)
                                     {
-                                        so.ApplyModifiedProperties();
+                                        so.ApplyModifiedPropertiesWithoutUndo();
 
                                         // Raestore prefab override if this is a prefab instance
                                         if(PrefabUtility.IsPartOfPrefabInstance(comp))
@@ -808,14 +676,14 @@ namespace Proselyte.Persistence
                                         }
 
                                         // Restore tracking
-                                        trackedComponentIds.trackedComponentIds[componentInstanceId] = previouslyTrackedIds;
-                                        processedComponentsThisDomainCycle.Add(componentInstanceId);
+                                        registrar_data.trackedComponentIds[componentInstanceId] = previouslyTrackedIds;
+                                        registrar_data.processedComponentsThisDomainCycle.Add(componentInstanceId);
 
                                         EditorUtility.SetDirty(comp);
                                     }
                                 }
                                 // NOTE(Jazz): Are we already guarding against processed components in ProcessComponentForPersistentIds() ...?
-                                else if(!processedComponentsThisDomainCycle.Contains(componentInstanceId)) 
+                                else if(!registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId)) 
                                 {
                                     // Normal processing path
                                     ProcessComponentForPersistentIds(comp);
@@ -828,7 +696,7 @@ namespace Proselyte.Persistence
                                     if(component != null)
                                     {
                                         var componentInstanceId = component.GetInstanceID();
-                                        if(!processedComponentsThisDomainCycle.Contains(componentInstanceId))
+                                        if(!registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId))
                                         {
                                             ProcessComponentForPersistentIds(component);
                                         }
@@ -859,7 +727,7 @@ namespace Proselyte.Persistence
 
                             // Clean up any orphaned component tracking that might result from structure changes
                             var orphanedComponentIds = new List<int>();
-                            foreach(var componentInstanceId in trackedComponentIds.trackedComponentIds.Keys.ToList())
+                            foreach(var componentInstanceId in registrar_data.trackedComponentIds.Keys.ToList())
                             {
                                 var trackedObj = EditorUtility.InstanceIDToObject(componentInstanceId);
                                 if(trackedObj == null)
@@ -891,7 +759,7 @@ namespace Proselyte.Persistence
                                 if(comp != null)
                                 {
                                     var componentInstanceId = comp.GetInstanceID();
-                                    if(!processedComponentsThisDomainCycle.Contains(componentInstanceId))
+                                    if(!registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId))
                                     {
                                         ProcessComponentForPersistentIds(comp);
                                     }
@@ -928,7 +796,7 @@ namespace Proselyte.Persistence
                             AssetDatabase.SaveAssets();
                             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
 
-                            LogDebug($"[PersistentIdManager] Cleared and unregistered PersistentIds from new prefab asset: {prefab.name}");
+                            LogDebug($"{nameof(PersistentIdRegistrar)} Cleared and unregistered PersistentIds from new prefab asset: {prefab.name}");
                         }
                     }
                     break;
@@ -953,11 +821,9 @@ namespace Proselyte.Persistence
                                 if(comp == null) continue;
 
                                 int componentInstanceId = comp.GetInstanceID();
-                                if(!trackedComponentIds.trackedComponentIds.ContainsKey(componentInstanceId)) continue;
+                                if(!registrar_data.trackedComponentIds.ContainsKey(componentInstanceId)) continue;
 
                                 var orderedIds = new List<uint>();
-
-                                Undo.RecordObject(comp, "Restore Prefab Instance Persistent IDs");
 
                                 SerializedObject so = new SerializedObject(comp);
                                 SerializedProperty iterator = so.GetIterator();
@@ -1061,13 +927,13 @@ namespace Proselyte.Persistence
 
                                 if(!hasChanges) continue;
 
-                                so.ApplyModifiedProperties();
+                                so.ApplyModifiedPropertiesWithoutUndo();
                                 // Mark as prefab instance override
                                 PrefabUtility.RecordPrefabInstancePropertyModifications(comp);
 
                                 // Restore tracking (convert back to HashSet for existing system)
-                                trackedComponentIds.trackedComponentIds[componentInstanceId] = new HashSet<uint>(preservedIds);
-                                processedComponentsThisDomainCycle.Add(componentInstanceId);
+                                registrar_data.trackedComponentIds[componentInstanceId] = new HashSet<uint>(preservedIds);
+                                registrar_data.processedComponentsThisDomainCycle.Add(componentInstanceId);
 
                                 LogDebug($"Restored {preservedIds.Count} {nameof(PersistentId)}s in " +
                                     $"order as overrides on {comp.name}");
@@ -1094,7 +960,7 @@ namespace Proselyte.Persistence
             {
                 var mod = modifications[i];
 
-                if (mod.currentValue.target is not MonoBehaviour component) continue;
+                if(mod.currentValue.target is not MonoBehaviour component) continue;
 
                 var scene = component.gameObject.scene;
 
@@ -1108,27 +974,76 @@ namespace Proselyte.Persistence
                 var idProp = prop.FindPropertyRelative(nameof(PersistentId.id));
                 if(idProp == null) continue;
 
+                // Check if undo is trying to zero out an ID
                 if(uint.TryParse(mod.currentValue.value, out var newValue) &&
-                    newValue == 0 &&
-                    uint.TryParse(mod.previousValue.value, out var previousId) &&
-                    previousId != 0)
+                    newValue == 0)
                 {
-                    Undo.RecordObject(component, "Preventing Undo Removing Registered IDs");
-                    mod.currentValue.value = mod.previousValue.value;
-                    modifications[i] = mod;
+                    var componentInstanceId = component.GetInstanceID();
 
-                    if(PrefabUtility.IsPartOfPrefabInstance(mod.currentValue.target))
+                    // Check tracking to see if this component has IDs
+                    if(registrar_data.trackedComponentIds.TryGetValue(componentInstanceId, out var trackedIds))
                     {
-                        modifications[i].keepPrefabOverride = true;
-                    }
+                        // Try to get the previous value from undo stack
+                        uint previousId = 0;
+                        uint.TryParse(mod.previousValue.value, out previousId);
 
-                    if(!IsIdRegistered(previousId))
-                    {
-                        RegisterId(component.gameObject, previousId);
-                    }
+                        // If previousId is 0 but we have tracked IDs, find the right one
+                        if(previousId == 0 && trackedIds.Count > 0)
+                        {
+                            // Try to match by property path or use the current property value
+                            previousId = idProp.uintValue;
 
-                    LogDebug($"Blocked zeroing of {nameof(PersistentId)}. " +
-                        $"Restored previous ID: 0x{previousId:X8} on '{component.name}'");
+                            if(previousId == 0)
+                            {
+                                // Find which tracked ID corresponds to this property
+                                // Iterate through properties to find index
+                                SerializedProperty iterator = so.GetIterator();
+                                int persistentIdIndex = 0;
+                                int currentIndex = 0;
+
+                                while(iterator.NextVisible(true))
+                                {
+                                    if(iterator.propertyType == SerializedPropertyType.Generic &&
+                                       iterator.type == nameof(PersistentId))
+                                    {
+                                        if(iterator.propertyPath == prop.propertyPath)
+                                        {
+                                            persistentIdIndex = currentIndex;
+                                            break;
+                                        }
+                                        currentIndex++;
+                                    }
+                                }
+
+                                // Use the tracked ID at this index
+                                var trackedIdsList = trackedIds.ToList();
+                                if(persistentIdIndex < trackedIdsList.Count)
+                                {
+                                    previousId = trackedIdsList[persistentIdIndex];
+                                }
+                            }
+                        }
+
+                        // Block the zeroing if we found a valid previous ID
+                        if(previousId != 0 && trackedIds.Contains(previousId))
+                        {
+                            mod.currentValue.value = previousId.ToString();
+                            modifications[i] = mod;
+
+                            if(PrefabUtility.IsPartOfPrefabInstance(mod.currentValue.target))
+                            {
+                                modifications[i].keepPrefabOverride = true;
+                            }
+
+                            if(!IsIdRegistered(previousId))
+                            {
+                                RegisterId(component.gameObject, previousId);
+                            }
+
+                            LogDebug($"Blocked zeroing of {nameof(PersistentId)}. " +
+                                $"Restored tracked ID: 0x{previousId:X8} on '{component.name}'");
+                        }
+                    }
                 }
             }
 
@@ -1143,7 +1058,7 @@ namespace Proselyte.Persistence
             var keysToRemove = new List<int>();
             var trackingUpdates = new Dictionary<int, HashSet<uint>>();
 
-            foreach(var kvp in trackedComponentIds.trackedComponentIds)
+            foreach(var kvp in registrar_data.trackedComponentIds)
             {
                 int componentInstanceId = kvp.Key;
                 var trackedIds = kvp.Value;
@@ -1181,7 +1096,7 @@ namespace Proselyte.Persistence
                         if(!IsIdRegistered(currentId))
                         {
                             RegisterId(comp.gameObject, currentId);
-                            LogDebug($"Re-registered {nameof(PersistentId)} after undo: 0x{currentId:X8} for {obj.name}");
+                            LogDebug($"Re-registered {nameof(PersistentId)} after undo/redo: 0x{currentId:X8} for {obj.name}");
                         }
                     }
 
@@ -1191,13 +1106,13 @@ namespace Proselyte.Persistence
 
             foreach(var update in trackingUpdates)
             {
-                trackedComponentIds.trackedComponentIds[update.Key] = update.Value;
+                registrar_data.trackedComponentIds[update.Key] = update.Value;
             }
 
             foreach(var key in keysToRemove)
             {
-                trackedComponentIds.trackedComponentIds.Remove(key);
-                processedComponentsThisDomainCycle.Remove(key);
+                registrar_data.trackedComponentIds.Remove(key);
+                registrar_data.processedComponentsThisDomainCycle.Remove(key);
             }
 
             foreach(var orphanedId in orphanedIds)
@@ -1211,17 +1126,55 @@ namespace Proselyte.Persistence
 
             registry.ValidateRegistry();
             #endregion
+
+            // TODO(Jazz): Check for clean state restoration in delaycall
+            EditorApplication.delayCall -= CheckForCleanStateRestoration;
+            EditorApplication.delayCall += CheckForCleanStateRestoration;
+        }
+
+        private static void CheckForCleanStateRestoration()
+        {
+            for(int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if(!scene.isLoaded || !scene.isDirty) continue;
+
+                string sceneGuid = AssetDatabase.AssetPathToGUID(scene.path);
+
+                // Check if we have a saved snapshot for this scene
+                if(!registrar_data.savedSceneSnapshots.TryGetValue(sceneGuid, out var savedSnapshot)) continue;
+
+                // Collect current IDs in the scene
+                var currentIds = new HashSet<uint>();
+                foreach(var root in scene.GetRootGameObjects())
+                {
+                    foreach(var comp in root.GetComponentsInChildren<MonoBehaviour>(true))
+                    {
+                        if(comp != null)
+                        {
+                            CollectIdsFromComponent(comp, currentIds);
+                        }
+                    }
+                }
+
+                // Compare: if current state matches saved snapshot, clear dirty flag
+                if(currentIds.SetEquals(savedSnapshot))
+                {
+                    EditorSceneManager.SaveScene(scene);
+                    LogDebug($"Undo/Redo restored scene '{scene.name}' to saved state. Cleared dirty flag.");
+                }
+            }
         }
 
         #region Scene Operations
         private static void OnSceneOpened(Scene scene, OpenSceneMode mode)
         {
-            LogDebug("Editor Scene Opened Beginning. Tracked Component Count: " + trackedComponentIds.trackedComponentIds.Count);
+            LogDebug("Editor Scene Opened Beginning. Tracked Component Count: " + registrar_data.trackedComponentIds.Count);
 
             string sceneGuid = AssetDatabase.GUIDFromAssetPath(scene.path).ToString();
-            sceneDirtyState[sceneGuid] = false;
 
-            // Get all MonoBehaviour components in the scene
+            // Get all MonoBehaviour components in the scene when opening
+            // NOTE(Jazz): HEAVY SCAN - we need to do this on scene open in case any PersistentId-holding components have been modified.
             var rootGameObjects = scene.GetRootGameObjects();
             var allComponents = new List<MonoBehaviour>();
 
@@ -1263,11 +1216,16 @@ namespace Proselyte.Persistence
 
                         // Update tracking
                         var instanceId = component.GetInstanceID();
-                        if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
-                            trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
-                        trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
-
+                        if(!registrar_data.trackedComponentIds.ContainsKey(instanceId))
+                            registrar_data.trackedComponentIds[instanceId] = new HashSet<uint>();
+                        
+                        registrar_data.trackedComponentIds[instanceId].Add(newId);
                         openedScenePersistentIDs.Add(newId);
+
+                        // Track as unsaved since we just generated it
+                        if(!registrar_data.unsavedIds.ContainsKey(sceneGuid))
+                            registrar_data.unsavedIds[sceneGuid] = new HashSet<uint>();
+                        registrar_data.unsavedIds[sceneGuid].Add(newId);
                     }
                     // Handle duplicate detection for non-zero IDs
                     else if(registry.IsIdRegisteredGlobally(currentId))
@@ -1278,11 +1236,10 @@ namespace Proselyte.Persistence
                         {
                             // This ID already belongs to this scene - just ensure tracking is updated
                             var instanceId = component.GetInstanceID();
-                            if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
-                                trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
-                            trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
-                            // No need to re-register or modify - it's already correctly set up
+                            if(!registrar_data.trackedComponentIds.ContainsKey(instanceId))
+                                registrar_data.trackedComponentIds[instanceId] = new HashSet<uint>();
 
+                            registrar_data.trackedComponentIds[instanceId].Add(currentId);
                             openedScenePersistentIDs.Add(currentId);
                         }
                         else
@@ -1299,21 +1256,26 @@ namespace Proselyte.Persistence
 
                             // Update tracking
                             var instanceId = component.GetInstanceID();
-                            if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
-                                trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
-                            trackedComponentIds.trackedComponentIds[instanceId].Add(newId);
+                            if(!registrar_data.trackedComponentIds.ContainsKey(instanceId))
+                                registrar_data.trackedComponentIds[instanceId] = new HashSet<uint>();
+                            registrar_data.trackedComponentIds[instanceId].Add(newId);
 
                             openedScenePersistentIDs.Add(newId);
+
+                            // Track as unsaved
+                            if(!registrar_data.unsavedIds.ContainsKey(sceneGuid))
+                                registrar_data.unsavedIds[sceneGuid] = new HashSet<uint>();
+                            registrar_data.unsavedIds[sceneGuid].Add(newId);
                         }
                     }
                     else
                     {
-                        // Not registered yet - register it and track it
+                        // Component not registered yet - register it and track it
                         RegisterId(component.gameObject, currentId);
                         var instanceId = component.GetInstanceID();
-                        if(!trackedComponentIds.trackedComponentIds.ContainsKey(instanceId))
-                            trackedComponentIds.trackedComponentIds[instanceId] = new HashSet<uint>();
-                        trackedComponentIds.trackedComponentIds[instanceId].Add(currentId);
+                        if(!registrar_data.trackedComponentIds.ContainsKey(instanceId))
+                            registrar_data.trackedComponentIds[instanceId] = new HashSet<uint>();
+                        registrar_data.trackedComponentIds[instanceId].Add(currentId);
 
                         openedScenePersistentIDs.Add(currentId);
                     }
@@ -1321,16 +1283,23 @@ namespace Proselyte.Persistence
 
                 if(componentModified)
                 {
-                    so.ApplyModifiedProperties();
+                    so.ApplyModifiedPropertiesWithoutUndo();
                     EditorUtility.SetDirty(component);
                 }
             }
-
+            
+            // Capture a snapshot after processing the freshly opened scene
+            var snapshot = new HashSet<uint>(openedScenePersistentIDs);
+            registrar_data.savedSceneSnapshots[sceneGuid] = snapshot;
+            LogDebug($"Captured clean state snapshot for '{scene.name}' with {snapshot.Count} IDs");
+            
+            // If the scene was modified (duplicated fixed, generated / removed ids, etc.) update on the next save
             if(sceneModified)
             {
                 EditorSceneManager.MarkSceneDirty(scene);
             }
 
+            // Orphaned Id cleanup
             string curr_scene_guid = AssetDatabase.AssetPathToGUID(scene.path);
             if(!string.IsNullOrEmpty(curr_scene_guid))
             {
@@ -1373,22 +1342,24 @@ namespace Proselyte.Persistence
             }
 
             LogDebug($"Rehydrated {nameof(PersistentId)} tracking for scene '{scene.name}'");
-            LogDebug("Editor Scene Opened Completed. Tracked Component Count: " + trackedComponentIds.trackedComponentIds.Count);
+            LogDebug("Editor Scene Opened Completed. Tracked Component Count: " + registrar_data.trackedComponentIds.Count);
         }
 
         public static void OnSceneClosing(Scene scene, bool removingScene)
         {
             // Safe to remove scene from clean-state tracking
             var sceneGuid = AssetDatabase.AssetPathToGUID(scene.path);
-            if(sceneDirtyState.ContainsKey(sceneGuid))
+
+            // Remove snapshot tracking for scene on close
+            if(registrar_data.savedSceneSnapshots.ContainsKey(sceneGuid))
             {
-                sceneDirtyState.Remove(sceneGuid);
-                LogDebug($"Closing Scene: {scene.name}. Removed from clean state tracking.");
+                registrar_data.savedSceneSnapshots.Remove(sceneGuid);
+                LogDebug($"Closing Scene: {scene.name}. Removed snapshot.");
             }
 
             var component_ids_to_remove = new List<int>();
 
-            // NOTE(Jazz): Another big, heavy edit-time scan,
+            // NOTE(Jazz): Another big, HEAVY SCAN during edit-time,
             // but only on scene closing in editor
             foreach(var root in scene.GetRootGameObjects())
             {
@@ -1410,9 +1381,9 @@ namespace Proselyte.Persistence
                 componentIndex--)
             {
                 var curr_comp_instanceID = component_ids_to_remove[componentIndex];
-                if(trackedComponentIds.trackedComponentIds.ContainsKey(curr_comp_instanceID))
+                if(registrar_data.trackedComponentIds.ContainsKey(curr_comp_instanceID))
                 {
-                    trackedComponentIds.trackedComponentIds.Remove(curr_comp_instanceID);
+                    registrar_data.trackedComponentIds.Remove(curr_comp_instanceID);
 
                     // NOTE(Jazz): Remove only unserialized registered IDs in dirtied scene, the scene has unserialized
                     // Persistent Id values which need to be wiped from the registry.
@@ -1434,7 +1405,7 @@ namespace Proselyte.Persistence
                             
                             // Valid persistentId property found
                             // Compare against unsaved ids hashset for the scene
-                            if(PersistentIdManager.unsavedIds.TryGetValue(sceneGuid, out var unsavedSet) &&
+                            if(registrar_data.unsavedIds.TryGetValue(sceneGuid, out var unsavedSet) &&
                                     unsavedSet.Contains(idProp.uintValue))
                             {
                                 registry.UnregisterId(idProp.uintValue);
@@ -1446,20 +1417,28 @@ namespace Proselyte.Persistence
             }
         }
 
-        public static void OnSceneDirtied(Scene dirtiedScene)
-        {
-            string sceneGuid = AssetDatabase.GUIDFromAssetPath(dirtiedScene.path).ToString();
-            sceneDirtyState[sceneGuid] = true;
-        }
-
         public static void OnSceneSaved(Scene savedScene)
         {
             // Safe to remove unsaved ids from scene and reset clean-state scene tracking
             string sceneGuid = AssetDatabase.AssetPathToGUID(savedScene.path);
-            PersistentIdManager.unsavedIds.Remove(sceneGuid);
-            LogDebug($"Saved Scene: {savedScene.name}. Cleared unsaved persistent id tracking dictionary.");
 
-            sceneDirtyState[sceneGuid] = false;
+            // Capture snapshot of all PersistentIds in this scene
+            // NOTE(Jazz): BIG HEAVY SLOW full hierarchy scan to collect gameobjects - aren't we already storing this scene's registered ids?
+            var snapshot = new HashSet<uint>();
+            foreach(var root in savedScene.GetRootGameObjects())
+            {
+                foreach(var comp in root.GetComponentsInChildren<MonoBehaviour>(true))
+                {
+                    if(comp != null)
+                    {
+                        CollectIdsFromComponent(comp, snapshot);
+                    }
+                }
+            }
+            registrar_data.savedSceneSnapshots[sceneGuid] = snapshot;
+
+            registrar_data.unsavedIds.Remove(sceneGuid);
+            LogDebug($"Saved Scene: {savedScene.name}. Captured snapshot with {snapshot.Count} IDs.");
         }
         #endregion Scene Operations
 
@@ -1497,7 +1476,6 @@ namespace Proselyte.Persistence
         public static void RegenerateId(SerializedProperty persistentIdProperty)
         {
             var target = persistentIdProperty.serializedObject.targetObject;
-            Undo.RecordObject(target, $"Regenerate {nameof(PersistentId)} Values");
 
             var idProp = persistentIdProperty.FindPropertyRelative(nameof(PersistentId.id));
             if(idProp != null && idProp.propertyType == SerializedPropertyType.Integer)
@@ -1551,10 +1529,6 @@ namespace Proselyte.Persistence
 
         private static void ClearIdsFromPrefabAsset(SerializedObject so)
         {
-            //TODO(Jazz): Does this need to be tracked by undo?
-            //Shouldn't all prefab assets have persistent ids wiped?
-            //Undo.RecordObject(so.targetObject, $"Clear {nameof(PersistentId)} Values");
-
             var iterator = so.GetIterator();
             bool hasChanges = false;
 
@@ -1581,7 +1555,7 @@ namespace Proselyte.Persistence
 
             if(hasChanges)
             {
-                so.ApplyModifiedProperties();
+                so.ApplyModifiedPropertiesWithoutUndo();
             }
         }
 
@@ -1599,11 +1573,11 @@ namespace Proselyte.Persistence
 
             if(idsForComponent.Count > 0)
             {
-                trackedComponentIds.trackedComponentIds[componentInstanceId] = idsForComponent;
+                registrar_data.trackedComponentIds[componentInstanceId] = idsForComponent;
             }
             else
             {
-                trackedComponentIds.trackedComponentIds.Remove(componentInstanceId);
+                registrar_data.trackedComponentIds.Remove(componentInstanceId);
             }
         }
 
@@ -1661,7 +1635,7 @@ namespace Proselyte.Persistence
 
         private static void CleanupComponentInstanceId(int componentInstanceId)
         {
-            if(trackedComponentIds.trackedComponentIds.TryGetValue(componentInstanceId, out var ids))
+            if(registrar_data.trackedComponentIds.TryGetValue(componentInstanceId, out var ids))
             {
                 foreach(var id in ids)
                 {
@@ -1672,9 +1646,9 @@ namespace Proselyte.Persistence
                             $"component removal (componentInstanceId: {componentInstanceId})");
                     }
                 }
-                trackedComponentIds.trackedComponentIds.Remove(componentInstanceId);
+                registrar_data.trackedComponentIds.Remove(componentInstanceId);
             }
-            processedComponentsThisDomainCycle.Remove(componentInstanceId);
+            registrar_data.processedComponentsThisDomainCycle.Remove(componentInstanceId);
         }
 
         private static void ProcessComponentForPersistentIds(MonoBehaviour component)
@@ -1683,7 +1657,7 @@ namespace Proselyte.Persistence
             if(component == null) return;
 
             var componentInstanceId = component.GetInstanceID();
-            if(processedComponentsThisDomainCycle.Contains(componentInstanceId)) return;
+            if(registrar_data.processedComponentsThisDomainCycle.Contains(componentInstanceId)) return;
 
             var so = new SerializedObject(component);
 
@@ -1693,8 +1667,6 @@ namespace Proselyte.Persistence
             }
             else
             {
-                Undo.RecordObject(so.targetObject, $"Assign {nameof(PersistentId)} Values");
-
                 var idsToRegister = new Dictionary<GameObject, HashSet<uint>>();
                 var idsToUnregister = new HashSet<uint>();
                 bool hasChanges = false;
@@ -1708,8 +1680,8 @@ namespace Proselyte.Persistence
                     var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
                     if(!(idProp != null && 
                         idProp.propertyType == SerializedPropertyType.Integer)) continue; // NAND
-                    
-                    processedComponentsThisDomainCycle.Add(componentInstanceId);
+
+                    registrar_data.processedComponentsThisDomainCycle.Add(componentInstanceId);
                     uint currentPropPersistentId = idProp.uintValue;
 
                     if(currentPropPersistentId == 0)
@@ -1731,7 +1703,7 @@ namespace Proselyte.Persistence
                         {
                             bool isLegitimateOwner = false;
 
-                            if(trackedComponentIds.trackedComponentIds.TryGetValue(componentInstanceId, out var idsForComponent) &&
+                            if(registrar_data.trackedComponentIds.TryGetValue(componentInstanceId, out var idsForComponent) &&
                                 idsForComponent.Contains(currentPropPersistentId))
                             {
                                 isLegitimateOwner = true;
@@ -1739,7 +1711,7 @@ namespace Proselyte.Persistence
                             else
                             {
                                 bool foundElsewhere = false;
-                                foreach(var kvp in trackedComponentIds.trackedComponentIds)
+                                foreach(var kvp in registrar_data.trackedComponentIds)
                                 {
                                     if(kvp.Key != componentInstanceId && 
                                         kvp.Value.Contains(currentPropPersistentId))
@@ -1795,7 +1767,7 @@ namespace Proselyte.Persistence
 
                 if(hasChanges)
                 {
-                    so.ApplyModifiedProperties();
+                    so.ApplyModifiedPropertiesWithoutUndo();
                     EditorUtility.SetDirty(so.targetObject);
                 }
 
@@ -1817,10 +1789,10 @@ namespace Proselyte.Persistence
 
         private static void UpdateComponentTracking(int componentInstanceId, uint oldId, uint newId)
         {
-            if(!trackedComponentIds.trackedComponentIds.TryGetValue(componentInstanceId, out var ids))
+            if(!registrar_data.trackedComponentIds.TryGetValue(componentInstanceId, out var ids))
             {
                 ids = new HashSet<uint>();
-                trackedComponentIds.trackedComponentIds[componentInstanceId] = ids;
+                registrar_data.trackedComponentIds[componentInstanceId] = ids;
             }
 
             if(oldId != 0) ids.Remove(oldId);
@@ -1828,7 +1800,7 @@ namespace Proselyte.Persistence
 
             if(ids.Count == 0)
             {
-                trackedComponentIds.trackedComponentIds.Remove(componentInstanceId);
+                registrar_data.trackedComponentIds.Remove(componentInstanceId);
             }
         }
         #endregion Component Operations
@@ -1852,7 +1824,7 @@ namespace Proselyte.Persistence
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids ----");
-            foreach(var trackedComponent in trackedComponentIds.trackedComponentIds)
+            foreach(var trackedComponent in registrar_data.trackedComponentIds)
             {
                 sb.Append($"Instance Id: {trackedComponent.ToString()}, ");
                 foreach(var persistentId in trackedComponent.Value)
@@ -1868,25 +1840,8 @@ namespace Proselyte.Persistence
         private static void RemoveTrackedComponentIds()
         {
             // Clear in-memory data
-            trackedComponentIds.trackedComponentIds.Clear();
-            processedComponentsThisDomainCycle.Clear();
-
-            // Also clear the persistent JSON file
-            string fullPath = Path.Combine(Application.dataPath, "../" +
-                PERSISTENCE_PROJECT_SETTINGS_PATH, TRACKED_COMPONENT_IDS_JSON_FILE_NAME);
-
-            try
-            {
-                if(File.Exists(fullPath))
-                {
-                    File.Delete(fullPath);
-                    LogDebug($"Deleted tracking JSON file at {fullPath}");
-                }
-            }
-            catch(System.Exception ex)
-            {
-                LogError($"Failed to clear tracking JSON file: {ex.Message}");
-            }
+            registrar_data.trackedComponentIds.Clear();
+            registrar_data.processedComponentsThisDomainCycle.Clear();
 
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Cleared Tracked Component Ids ----");
@@ -1898,14 +1853,14 @@ namespace Proselyte.Persistence
         public static void PrintProcessedComponentIds()
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.AppendLine($"==== Processed Component Instance Ids [{processedComponentsThisDomainCycle.Count}] =====");
-            foreach(var componentInstanceID in processedComponentsThisDomainCycle)
+            sb.AppendLine($"==== Processed Component Instance Ids [{registrar_data.processedComponentsThisDomainCycle.Count}] =====");
+            foreach(var componentInstanceID in registrar_data.processedComponentsThisDomainCycle)
             {
-                if(!trackedComponentIds.trackedComponentIds.ContainsKey(componentInstanceID)) continue;
+                if(!registrar_data.trackedComponentIds.ContainsKey(componentInstanceID)) continue;
                 sb.Append("\nInstanceID: " + componentInstanceID.ToString() + " ");
 
                 int count = 0;
-                foreach(var persistentId in trackedComponentIds.trackedComponentIds[componentInstanceID])
+                foreach(var persistentId in registrar_data.trackedComponentIds[componentInstanceID])
                 {
                     sb.Append($"ID {count:D2}: 0x{persistentId:X8}, ");
                     count++;

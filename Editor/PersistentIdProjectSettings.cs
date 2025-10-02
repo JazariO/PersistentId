@@ -3,7 +3,7 @@ using System.IO;
 using UnityEditor;
 using UnityEngine;
 using static Proselyte.Persistence.PersistentIdLogger;
-using static Proselyte.Persistence.PersistentIdManager;
+using static Proselyte.Persistence.PersistentIdRegistrar;
 
 namespace Proselyte.Persistence
 {
