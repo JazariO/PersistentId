@@ -16,8 +16,12 @@ namespace Proselyte.Persistence
         [SerializeField]
         public PersistentIdRegistrySO registry;
 
-        [SerializeField]
-        public PersistentIdLogger.LogSeverity logSeverity = PersistentIdLogger.LogSeverity.Warning;
+        public PersistentIdLogger.LogSeverity LogSeverity
+        {
+            get => (PersistentIdLogger.LogSeverity)EditorPrefs.GetInt("com.proselyte.persistence.logSeverity", (int)PersistentIdLogger.LogSeverity.Warning);
+            set => EditorPrefs.SetInt("com.proselyte.persistence.logSeverity", (int)value);
+        }
+
 
         void OnEnable()
         {
@@ -32,8 +36,9 @@ namespace Proselyte.Persistence
 
         public void ApplyLoggingSettings()
         {
-            PersistentIdLogger.MinimumSeverity = logSeverity;
+            PersistentIdLogger.MinimumSeverity = LogSeverity;
         }
+
 
         public static bool RehydrateRegistryReference()
         {

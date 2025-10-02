@@ -31,46 +31,51 @@ namespace Proselyte.Persistence
 
         public override void OnGUI(string searchContext)
         {
+            m_SerializedObject.Update();
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Persistent ID System Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.Space();
+
+            // Registry assignment field
+            var previousRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
+            EditorGUILayout.PropertyField(m_RegistryProperty, new GUIContent("ID Registry", "The Persistent ID Registry asset that will track all IDs in the project"));
+
+            ShowRegistryInfo();
+
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Debugging Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.Space();
+
+            // Log severity handled separately to avoid triggering domain reload
+            var currentSeverity = PersistentIdProjectSettings.instance.LogSeverity;
+            var newSeverity = (PersistentIdLogger.LogSeverity)EditorGUILayout.EnumPopup(
+                new GUIContent("Log Severity", "Controls the minimum severity level for Persistent ID system logs"),
+                currentSeverity
+            );
+
+            if(newSeverity != currentSeverity)
+            {
+                PersistentIdProjectSettings.instance.LogSeverity = newSeverity;
+                PersistentIdProjectSettings.instance.ApplyLoggingSettings();
+                LogInfo($"[PersistentIdSettings] Log severity changed to: {newSeverity}");
+            }
+
+            EditorGUILayout.Space();
+
+            // Only registry changes are tracked for reload
             using(var check = new EditorGUI.ChangeCheckScope())
             {
-                m_SerializedObject.Update();
-
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Persistent ID System Configuration", EditorStyles.boldLabel);
-                EditorGUILayout.Space();
-
-                // Registry assignment field
-                var previousRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
-                EditorGUILayout.PropertyField(m_RegistryProperty, new GUIContent("ID Registry",
-                    "The Persistent ID Registry asset that will track all IDs in the project"));
-
-                ShowRegistryInfo();
-
-                EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Debugging Configuration", EditorStyles.boldLabel);
-                EditorGUILayout.Space();
-
-                var severityProperty = m_SerializedObject.FindProperty(nameof(PersistentIdProjectSettings.logSeverity));
-                EditorGUILayout.PropertyField(severityProperty, new GUIContent("Log Severity",
-                    "Controls the minimum severity level for Persistent ID system logs"));
-
-
                 if(check.changed)
                 {
                     var newRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
 
-                    // Show confirmation dialog for significant changes
                     if(ShouldShowConfirmation(previousRegistry, newRegistry))
                     {
                         if(ShowRegistryChangeConfirmation(previousRegistry, newRegistry))
                         {
-                            // Apply the change and reinitialize
                             m_SerializedObject.ApplyModifiedProperties();
-
-                            if(m_RegistryProperty.objectReferenceValue != null)
-                                PersistentIdProjectSettings.instance.SaveRegistryRef();
-                            
-                            // Reinitialize the registrar with new registry and cleared tracking data
+                            PersistentIdProjectSettings.instance.SaveRegistryRef();
                             PersistentIdRegistrar.ClearTrackingData();
                             EditorUtility.RequestScriptReload();
 
@@ -78,25 +83,19 @@ namespace Proselyte.Persistence
                         }
                         else
                         {
-                            // User cancelled - revert the property
                             m_RegistryProperty.objectReferenceValue = previousRegistry;
                         }
                     }
                     else
                     {
                         m_SerializedObject.ApplyModifiedProperties();
-                        
-                        if(m_RegistryProperty.objectReferenceValue != null)
-                            PersistentIdProjectSettings.instance.SaveRegistryRef();
                         PersistentIdProjectSettings.instance.SaveRegistryRef();
                         EditorUtility.RequestScriptReload();
                     }
-
-                    PersistentIdProjectSettings.instance.ApplyLoggingSettings();
                 }
-
-                EditorGUILayout.Space();
             }
+
+            EditorGUILayout.Space();
         }
 
         private bool ShouldShowConfirmation(PersistentIdRegistrySO oldRegistry, PersistentIdRegistrySO newRegistry)
