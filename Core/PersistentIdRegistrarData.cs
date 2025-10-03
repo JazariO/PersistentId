@@ -112,12 +112,6 @@ namespace Proselyte.Persistence
                      $"{_unsavedIds.Count} unsaved ID entries");
         }
 
-        internal void ForceSaveRegistrarData()
-        {
-            LogDebug($"Saving {nameof(PersistentIdRegistrarData)} to path: {GetFilePath()}");
-            Save(true);
-        }
-
         internal void ClearAll()
         {
             _trackedComponentIds.Clear();
@@ -129,7 +123,6 @@ namespace Proselyte.Persistence
             _sceneSnapshotEntries.Clear();
             _unsavedIdsEntries.Clear();
 
-            Save(true);
             LogDebug("Cleared all transient registrar data");
         }
     }

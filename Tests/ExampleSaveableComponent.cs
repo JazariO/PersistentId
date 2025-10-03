@@ -6,10 +6,6 @@ public class ExampleSaveableComponent : MonoBehaviour
 {
     [Header("Persistent Identification")]
     [SerializeField] private PersistentId persistentId;
-    [SerializeField] private PersistentId persistentId2;
-
-
-
 
     [Header("Saveable Data")]
     [SerializeField] private int score = 0;

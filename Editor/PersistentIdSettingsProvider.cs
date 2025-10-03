@@ -103,7 +103,6 @@ namespace Proselyte.Persistence
             return oldRegistry != newRegistry;
         }
 
-
         private bool ShowRegistryChangeConfirmation(PersistentIdRegistrySO oldRegistry, PersistentIdRegistrySO newRegistry)
         {
             string message;

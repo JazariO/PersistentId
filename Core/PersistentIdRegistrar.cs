@@ -466,8 +466,6 @@ namespace Proselyte.Persistence
             LogDebug("Before Domain Reload.");
             PrintTrackedComponentIds();
 
-            registrar_data.ForceSaveRegistrarData();
-
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("---- Tracked Component Ids Before Domain Reload ----");
             foreach(var trackedComponent in registrar_data.trackedComponentIds)
@@ -1491,7 +1489,7 @@ namespace Proselyte.Persistence
                 if(newId != 0)
                 {
                     idProp.uintValue = newId;
-                    persistentIdProperty.serializedObject.ApplyModifiedProperties();
+                    persistentIdProperty.serializedObject.ApplyModifiedPropertiesWithoutUndo();
                     if(target is MonoBehaviour comp)
                     {
                         UpdateComponentTracking(comp.GetInstanceID(), oldId, newId);
