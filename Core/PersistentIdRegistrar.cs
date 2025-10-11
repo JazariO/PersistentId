@@ -483,15 +483,6 @@ namespace Proselyte.Persistence
         private static void OnAfterAssemblyReload()
         {
             LogDebug("After Domain Reload: performing ");
-            //var gos = GameObject.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
-            //var sb = new System.Text.StringBuilder();
-            //foreach(var g in gos)
-            //{
-            //    sb.AppendLine($"InstanceID Found: {g.GetInstanceID()}");
-            //}
-            //LogDebug(sb.ToString());
-
-            //PrintTrackedComponentJson("OnAfterAssemblyReload");
         }
 
         private static void OnObjectChangesPublished(ref ObjectChangeEventStream stream)
