@@ -28,7 +28,7 @@ Designed to be dropped into existing projects - "declare and forget" - these ide
 ## Usage
 ```csharp
 using UnityEngine;
-using Proselyte.PersistentId;
+using Proselyte.Persistence;
 
 public class MyComponent : MonoBehaviour
 {
