@@ -447,6 +447,9 @@ namespace Proselyte.Persistence
             EditorSceneManager.sceneClosing += OnSceneClosing;
             EditorSceneManager.sceneSaved -= OnSceneSaved;
             EditorSceneManager.sceneSaved += OnSceneSaved;
+
+            PrefabUtility.prefabInstanceUpdated -= OnPrefabInstanceUpdated;
+            PrefabUtility.prefabInstanceUpdated += OnPrefabInstanceUpdated;
         }
 
         private static void UnsubscribeToCallbacks()
@@ -459,6 +462,8 @@ namespace Proselyte.Persistence
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneClosing -= OnSceneClosing;
             EditorSceneManager.sceneSaved-= OnSceneSaved;
+
+            PrefabUtility.prefabInstanceUpdated -= OnPrefabInstanceUpdated;
         }
 
         private static void OnBeforeAssemblyReload()
@@ -799,11 +804,17 @@ namespace Proselyte.Persistence
                         // Preserve the existing tracking data with deterministic order
                         var preservedTracking = new Dictionary<int, List<uint>>();
 
+                        LogDebug($"[UpdatePrefabInstances] Event fired with {updatePrefabInstancesEvent.instanceIds.Length} instances");
+
+
                         // First pass: collect IDs in serialized property order
                         foreach(int instanceId in updatePrefabInstancesEvent.instanceIds)
                         {
                             GameObject prefabInstance = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
                             if(prefabInstance == null) continue;
+
+                            LogDebug($"  Instance: {prefabInstance.name}, Path: {prefabInstance.scene.path}");
+
 
                             foreach(var comp in prefabInstance.GetComponentsInChildren<MonoBehaviour>())
                             {
@@ -817,6 +828,8 @@ namespace Proselyte.Persistence
                                 SerializedObject so = new SerializedObject(comp);
                                 SerializedProperty iterator = so.GetIterator();
 
+                                LogDebug($"  Prefab Asset BEFORE clearing:");
+
                                 while(iterator.NextVisible(true))
                                 {
                                     if(iterator.propertyType == SerializedPropertyType.Generic &&
@@ -826,6 +839,7 @@ namespace Proselyte.Persistence
                                         if(idProp != null && idProp.uintValue != 0)
                                         {
                                             orderedIds.Add(idProp.uintValue);
+                                            LogDebug($"    Asset has ID: 0x{idProp.uintValue:X8}");
                                         }
                                     }
                                 }
@@ -939,7 +953,7 @@ namespace Proselyte.Persistence
         private static UndoPropertyModification[]
         OnPostProcessModifications(UndoPropertyModification[] modifications)
         {
-            LogDebug("Post processing undo modifications.");
+            LogDebug($"[OnPostProcessModifications] Processing {modifications.Length} modifications");
 
             // Avoid processing prefab assets
             if(PrefabStageUtility.GetCurrentPrefabStage() != null)
@@ -950,6 +964,9 @@ namespace Proselyte.Persistence
                 var mod = modifications[i];
 
                 if(mod.currentValue.target is not MonoBehaviour component) continue;
+
+                LogDebug($"  Target: {component.name}, Property: {mod.currentValue.propertyPath}");
+                LogDebug($"  Previous: {mod.previousValue.value}, Current: {mod.currentValue.value}");
 
                 var scene = component.gameObject.scene;
 
@@ -1545,6 +1562,67 @@ namespace Proselyte.Persistence
             if(hasChanges)
             {
                 so.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        private static void OnPrefabInstanceUpdated(GameObject instance)
+        {
+            LogDebug($"[OnPrefabInstanceUpdated] Instance: {instance.name}");
+
+            // Immediately check and clear prefab asset
+            foreach(var comp in instance.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if(comp == null) continue;
+
+                MonoBehaviour assetComp = PrefabUtility.GetCorrespondingObjectFromOriginalSource(comp);
+                if(assetComp == null) continue;
+
+                string assetPath = AssetDatabase.GetAssetPath(assetComp);
+                if(string.IsNullOrEmpty(assetPath)) continue;
+
+                // Load and clear the prefab asset immediately
+                GameObject prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+                try
+                {
+                    bool needsSave = false;
+                    foreach(var prefabComp in prefabRoot.GetComponentsInChildren<MonoBehaviour>(true))
+                    {
+                        if(prefabComp == null) continue;
+
+                        SerializedObject so = new SerializedObject(prefabComp);
+                        SerializedProperty iterator = so.GetIterator();
+
+                        while(iterator.NextVisible(true))
+                        {
+                            if(iterator.propertyType == SerializedPropertyType.Generic &&
+                               iterator.type == nameof(PersistentId))
+                            {
+                                var idProp = iterator.FindPropertyRelative(nameof(PersistentId.id));
+                                if(idProp != null && idProp.uintValue != 0)
+                                {
+                                    LogDebug($"  Clearing ID 0x{idProp.uintValue:X8} from prefab asset");
+                                    idProp.uintValue = 0;
+                                    needsSave = true;
+                                }
+                            }
+                        }
+
+                        if(needsSave)
+                        {
+                            so.ApplyModifiedPropertiesWithoutUndo();
+                        }
+                    }
+
+                    if(needsSave)
+                    {
+                        PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+                        LogDebug($"  Saved cleared prefab asset: {assetPath}");
+                    }
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                }
             }
         }
 
