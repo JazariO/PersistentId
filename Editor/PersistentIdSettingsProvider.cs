@@ -34,17 +34,52 @@ namespace Proselyte.Persistence
             m_SerializedObject.Update();
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Persistent ID System Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel);
             EditorGUILayout.Space();
 
             // Registry assignment field
             var previousRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
-            EditorGUILayout.PropertyField(m_RegistryProperty, new GUIContent("ID Registry", "The Persistent ID Registry asset that will track all IDs in the project"));
+
+            // Only registry changes are tracked for reload
+            using(var check = new EditorGUI.ChangeCheckScope())
+            {
+                EditorGUILayout.PropertyField(m_RegistryProperty, new GUIContent("ID Registry", "The Persistent ID Registry asset that will track all IDs in the project"));
+
+                if(check.changed)
+                {
+                    var newRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
+
+                    if(ShouldShowConfirmation(previousRegistry, newRegistry))
+                    {
+                        if(ShowRegistryChangeConfirmation(previousRegistry, newRegistry))
+                        {
+                            m_SerializedObject.ApplyModifiedProperties();
+                            PersistentIdProjectSettings.instance.SaveRegistryRef();
+                            PersistentIdRegistrar.ClearTrackingData();
+                            EditorUtility.RequestScriptReload();
+
+
+                            LogInfo($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");
+                        }
+                        else
+                        {
+                            m_RegistryProperty.objectReferenceValue = previousRegistry;
+                            m_SerializedObject.ApplyModifiedProperties();
+                        }
+                    }
+                    else
+                    {
+                        m_SerializedObject.ApplyModifiedProperties();
+                        PersistentIdProjectSettings.instance.SaveRegistryRef();
+                        EditorUtility.RequestScriptReload();
+                    }
+                }
+            }
 
             ShowRegistryInfo();
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Debugging Configuration", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Debug Settings", EditorStyles.boldLabel);
             EditorGUILayout.Space();
 
             // Log severity handled separately to avoid triggering domain reload
@@ -59,40 +94,6 @@ namespace Proselyte.Persistence
                 PersistentIdProjectSettings.instance.LogSeverity = newSeverity;
                 PersistentIdProjectSettings.instance.ApplyLoggingSettings();
                 LogInfo($"[PersistentIdSettings] Log severity changed to: {newSeverity}");
-            }
-
-            EditorGUILayout.Space();
-
-            // Only registry changes are tracked for reload
-            using(var check = new EditorGUI.ChangeCheckScope())
-            {
-                if(check.changed)
-                {
-                    var newRegistry = m_RegistryProperty.objectReferenceValue as PersistentIdRegistrySO;
-
-                    if(ShouldShowConfirmation(previousRegistry, newRegistry))
-                    {
-                        if(ShowRegistryChangeConfirmation(previousRegistry, newRegistry))
-                        {
-                            m_SerializedObject.ApplyModifiedProperties();
-                            PersistentIdProjectSettings.instance.SaveRegistryRef();
-                            PersistentIdRegistrar.ClearTrackingData();
-                            EditorUtility.RequestScriptReload();
-
-                            LogInfo($"[PersistentIdSettings] Registry changed to: {(newRegistry ? newRegistry.name : "None")}");
-                        }
-                        else
-                        {
-                            m_RegistryProperty.objectReferenceValue = previousRegistry;
-                        }
-                    }
-                    else
-                    {
-                        m_SerializedObject.ApplyModifiedProperties();
-                        PersistentIdProjectSettings.instance.SaveRegistryRef();
-                        EditorUtility.RequestScriptReload();
-                    }
-                }
             }
 
             EditorGUILayout.Space();
