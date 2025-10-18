@@ -58,7 +58,65 @@ namespace Proselyte.Persistence
             // TODO(Jazz): Add better sentinel initialization tracking using package version as key
             if(!EditorPrefs.GetBool(INITIALIZED_KEY, false))
             {
-                InitializeOnFirstInstall();
+                // Sentinel indicates this is a fresh install
+                LogDebug("Detected fresh package installation. Setting up PersistentIdRegistrySO.");
+
+                // Check for an existing registry
+                var existingRegistryGUIDs = AssetDatabase.FindAssets("t:" + nameof(PersistentIdRegistrySO));
+                if(existingRegistryGUIDs.Length > 0)
+                {
+                    var existingRegistryPath = AssetDatabase.GUIDToAssetPath(existingRegistryGUIDs[0]);
+                    var existingRegistry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(existingRegistryPath);
+                    if(existingRegistry != null)
+                    {
+                        EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, existingRegistryGUIDs[0]);
+                        return;
+                    }
+                }
+
+                // Create the PersistentIdRegistrySO asset
+                PersistentIdRegistrySO registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(DEFAULT_REGISTRY_ASSET_PATH);
+                if(registry != null)
+                {
+                    LogDebug("[PersistentIdInitializer] Found existing PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
+                }
+                else
+                {
+                    // Create a new PersistentIdRegistrySO
+                    registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
+                    if(registry == null)
+                    {
+                        LogError("[PersistentIdInitializer] Failed to create PersistentIdRegistrySO. Aborting first time initialization");
+                        return;
+                    }
+                }
+
+                // Save the registry asset to the Assets folder
+                AssetDatabase.CreateAsset(registry, DEFAULT_REGISTRY_ASSET_PATH);
+                AssetDatabase.SaveAssets();
+                LogDebug("[PersistentIdInitializer] Created new PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
+
+                // Assign the registry to the settings provider
+                if(registry != null && PersistentIdProjectSettings.instance != null)
+                {
+                    var registryGuid = AssetDatabase.GUIDFromAssetPath(DEFAULT_REGISTRY_ASSET_PATH);
+                    EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, registryGuid.ToString());
+
+                    PersistentIdProjectSettings.instance.registry = registry;
+                    // Save the settings to ensure the assignment persists
+                    EditorUtility.SetDirty(PersistentIdProjectSettings.instance);
+                    AssetDatabase.SaveAssets();
+                    LogDebug("Assigned Persistent Id Registry SO to project settings.");
+                }
+                else
+                {
+                    LogDebug("Failed to assign PersistentIdRegistrySO. " +
+                        "Ensure PersistentIdProjectSettings is properly set up.");
+                }
+
+                // Set the sentinel to indicate initialization is complete
+                EditorPrefs.SetBool(INITIALIZED_KEY, true);
+                LogDebug("Package initialization completed.");
             }
             else
             {
@@ -130,69 +188,6 @@ namespace Proselyte.Persistence
                     }
                     break;
             }
-        }
-
-        private static void InitializeOnFirstInstall()
-        {
-            // Sentinel indicates this is a fresh install
-            LogDebug("Detected fresh package installation. Setting up PersistentIdRegistrySO.");
-
-            // Check for an existing registry
-            var existingRegistryGUIDs = AssetDatabase.FindAssets("t:" + nameof(PersistentIdRegistrySO));
-            if(existingRegistryGUIDs.Length > 0)
-            {
-                var existingRegistryPath = AssetDatabase.GUIDToAssetPath(existingRegistryGUIDs[0]);
-                var existingRegistry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(existingRegistryPath);
-                if(existingRegistry != null)
-                {
-                    EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, existingRegistryGUIDs[0]);
-                    return;
-                }
-            }
-
-            // Create the PersistentIdRegistrySO asset
-            PersistentIdRegistrySO registry = AssetDatabase.LoadAssetAtPath<PersistentIdRegistrySO>(DEFAULT_REGISTRY_ASSET_PATH);
-            if(registry != null)
-            {
-                LogDebug("[PersistentIdInitializer] Found existing PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
-            }
-            else
-            {
-                // Create a new PersistentIdRegistrySO
-                registry = ScriptableObject.CreateInstance<PersistentIdRegistrySO>();
-                if(registry == null)
-                {
-                    LogError("[PersistentIdInitializer] Failed to create PersistentIdRegistrySO. Aborting first time initialization");
-                    return;
-                }
-            }
-
-            // Save the registry asset to the Assets folder
-            AssetDatabase.CreateAsset(registry, DEFAULT_REGISTRY_ASSET_PATH);
-            AssetDatabase.SaveAssets();
-            LogDebug("[PersistentIdInitializer] Created new PersistentIdRegistrySO at " + DEFAULT_REGISTRY_ASSET_PATH);
-
-            // Assign the registry to the settings provider
-            if(registry != null && PersistentIdProjectSettings.instance != null)
-            {
-                var registryGuid = AssetDatabase.GUIDFromAssetPath(DEFAULT_REGISTRY_ASSET_PATH);
-                EditorPrefs.SetString(DEFAULT_REGISTRY_GUID, registryGuid.ToString());
-
-                PersistentIdProjectSettings.instance.registry = registry;
-                // Save the settings to ensure the assignment persists
-                EditorUtility.SetDirty(PersistentIdProjectSettings.instance);
-                AssetDatabase.SaveAssets();
-                LogDebug("Assigned Persistent Id Registry SO to project settings.");
-            }
-            else
-            {
-                LogDebug("Failed to assign PersistentIdRegistrySO. " +
-                    "Ensure PersistentIdProjectSettings is properly set up.");
-            }
-
-            // Set the sentinel to indicate initialization is complete
-            EditorPrefs.SetBool(INITIALIZED_KEY, true);
-            LogDebug("Package initialization completed.");
         }
 
         private static void OnDelayCallInit()
