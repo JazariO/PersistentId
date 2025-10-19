@@ -248,6 +248,7 @@ namespace Proselyte.Persistence
                 for(int sceneIndex = 0; sceneIndex < EditorSceneManager.sceneCount; sceneIndex++)
                 {
                     var scene = EditorSceneManager.GetSceneAt(sceneIndex);
+                    if(scene == null || !scene.isLoaded) continue;
                     OnSceneOpened(scene, OpenSceneMode.Additive);
                 }
             }
