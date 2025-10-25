@@ -439,8 +439,8 @@ namespace Proselyte.Persistence
 
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneOpened += OnSceneOpened;
-            EditorSceneManager.sceneClosing -= OnSceneClosing;
-            EditorSceneManager.sceneClosing += OnSceneClosing;
+            EditorSceneManager.sceneUnloaded -= OnSceneUnloaded;
+            EditorSceneManager.sceneUnloaded += OnSceneUnloaded;
             EditorSceneManager.sceneSaved -= OnSceneSaved;
             EditorSceneManager.sceneSaved += OnSceneSaved;
 
@@ -456,7 +456,7 @@ namespace Proselyte.Persistence
             Undo.postprocessModifications -= OnPostProcessModifications;
 
             EditorSceneManager.sceneOpened -= OnSceneOpened;
-            EditorSceneManager.sceneClosing -= OnSceneClosing;
+            EditorSceneManager.sceneUnloaded -= OnSceneUnloaded;
             EditorSceneManager.sceneSaved-= OnSceneSaved;
 
             PrefabUtility.prefabInstanceUpdated -= OnPrefabInstanceUpdated;
@@ -1347,7 +1347,7 @@ namespace Proselyte.Persistence
             LogDebug("Editor Scene Opened Completed. Tracked Component Count: " + registrar_data.trackedComponentIds.Count);
         }
 
-        public static void OnSceneClosing(Scene scene, bool removingScene)
+        public static void OnSceneUnloaded(Scene scene)
         {
             // Safe to remove scene from clean-state tracking
             var sceneGuid = AssetDatabase.AssetPathToGUID(scene.path);
