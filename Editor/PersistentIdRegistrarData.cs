@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿#if UNITY_EDITOR
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using static Proselyte.Persistence.PersistentIdLogger;
@@ -148,3 +149,4 @@ namespace Proselyte.Persistence
     }
     #endregion
 }
+#endif //UNITY_EDITOR
